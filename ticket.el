@@ -153,6 +153,16 @@ Roots are tickets with no parent, or whose parent is unknown (not in id-table)."
           (push id roots))))
     (nreverse roots)))
 
+(defun ticket-browser--sort-ids-by-priority (ids id-table)
+  "Sort IDS by ticket priority; lower priority number appears first."
+  (sort (copy-sequence ids)
+        (lambda (a b)
+          (let ((pa (let ((ta (gethash a id-table)))
+                      (if ta (string-to-number (or (plist-get ta :priority) "2")) 2)))
+                (pb (let ((tb (gethash b id-table)))
+                      (if tb (string-to-number (or (plist-get tb :priority) "2")) 2))))
+            (< pa pb)))))
+
 (defun ticket-browser--render-tree (tickets graph filter)
   "Render the ticket tree into the current buffer.
 GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
@@ -218,13 +228,13 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
                                               'ticket-browser-depth depth
                                               'ticket-browser-has-children has-children))
                    (if (and has-children is-expanded)
-                       (dolist (child-id visible-children)
+                       (dolist (child-id (ticket-browser--sort-ids-by-priority visible-children id-table))
                          (render-node child-id (1+ depth)))
                      ;; Collapsed: mark entire subtree visited so the fallback
                      ;; loop doesn't surface children at the root level.
                      (dolist (child-id children)
                        (mark-visited child-id)))))))))
-      (dolist (root roots)
+      (dolist (root (ticket-browser--sort-ids-by-priority roots id-table))
         (render-node root 0))
       ;; Render any unvisited tickets (e.g., whose parent is filtered out)
       (dolist (ticket tickets)
@@ -323,6 +333,53 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
   (ticket-browser--redisplay)
   (message "Tickets refreshed."))
 
+(defun ticket-browser--set-priority (id new-priority)
+  "Set priority of ticket ID to NEW-PRIORITY by editing its .md file directly."
+  (let ((file (expand-file-name (concat id ".md") (ticket-directory))))
+    (when (file-exists-p file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (goto-char (point-min))
+        (when (looking-at "^---[ \t]*$")
+          (forward-line)
+          (let ((fm-start (point)))
+            (when (re-search-forward "^---[ \t]*$" nil t)
+              (let ((fm-end (match-beginning 0)))
+                (goto-char fm-start)
+                (if (re-search-forward "^priority:[ \t]*.*$" fm-end t)
+                    (replace-match (format "priority: %d" new-priority))
+                  (goto-char fm-end)
+                  (insert (format "priority: %d\n" new-priority)))))))
+        (write-region (point-min) (point-max) file nil 'silent)))))
+
+;;;###autoload
+(defun ticket-browser-increase-priority ()
+  "Increase priority of ticket at point (decrease number, min P0)."
+  (interactive)
+  (let ((id (ticket-browser--ticket-at-point)))
+    (when id
+      (let* ((ticket (seq-find (lambda (tkt) (equal (plist-get tkt :id) id))
+                               ticket-browser--tickets))
+             (current (string-to-number (or (plist-get ticket :priority) "2")))
+             (new-priority (max 0 (1- current))))
+        (ticket-browser--set-priority id new-priority)
+        (ticket-browser-refresh)
+        (message "Ticket %s priority: P%d" id new-priority)))))
+
+;;;###autoload
+(defun ticket-browser-decrease-priority ()
+  "Decrease priority of ticket at point (increase number, no limit)."
+  (interactive)
+  (let ((id (ticket-browser--ticket-at-point)))
+    (when id
+      (let* ((ticket (seq-find (lambda (tkt) (equal (plist-get tkt :id) id))
+                               ticket-browser--tickets))
+             (current (string-to-number (or (plist-get ticket :priority) "2")))
+             (new-priority (1+ current)))
+        (ticket-browser--set-priority id new-priority)
+        (ticket-browser-refresh)
+        (message "Ticket %s priority: P%d" id new-priority)))))
+
 (define-derived-mode ticket-browser-mode special-mode "Tickets"
   "Major mode for browsing tickets as a dependency tree.")
 
@@ -332,6 +389,8 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
 (define-key ticket-browser-mode-map (kbd ">") 'ticket-browser-expand-all)
 (define-key ticket-browser-mode-map (kbd "g") 'ticket-browser-refresh)
 (define-key ticket-browser-mode-map (kbd "q") 'quit-window)
+(define-key ticket-browser-mode-map (kbd "+") 'ticket-browser-increase-priority)
+(define-key ticket-browser-mode-map (kbd "-") 'ticket-browser-decrease-priority)
 (let ((s-map (make-sparse-keymap)))
   (define-key s-map "o" 'ticket-browser-show-open-only)
   (define-key s-map "a" 'ticket-browser-show-all)
@@ -349,7 +408,9 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
       ">" #'ticket-browser-expand-all
       "g" #'ticket-browser-refresh
       "q" #'quit-window
-      "s" s-map)))
+      "s" s-map
+      "+" #'ticket-browser-increase-priority
+      "-" #'ticket-browser-decrease-priority)))
 
 (defun ticket-browser--open (filter)
   "Open the ticket browser with FILTER (`open-only' or `all')."
