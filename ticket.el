@@ -3,9 +3,13 @@
 (require 'seq)
 (require 'cl-lib)
 
+(defun ticket--root-directory ()
+  "Return the project root (directory containing .tickets/) or nil."
+  (locate-dominating-file default-directory ".tickets/"))
+
 (defun ticket-directory ()
   "Return the path to the .tickets directory for the current project."
-  (let ((root (locate-dominating-file default-directory ".tickets/")))
+  (let ((root (ticket--root-directory)))
     (when root
       (expand-file-name ".tickets/" root))))
 
@@ -28,25 +32,27 @@ defaults to 'tk' which is expected to be in the path."
 
 (defun ticket--list-tickets ()
   "Return a list of open tickets."
-  (with-temp-buffer
-    (shell-command (format "%s list" ticket-executable) (current-buffer))
-    (goto-char (point-min))
-    (let ((tickets ()))
-      (while (not (eobp))
-        (let* ((line (buffer-substring-no-properties (line-beginning-position) (line-end-position)))
-               (parts (split-string line " " t))
-               (id (car parts))
-               (title (string-join (cdr (cdr parts)) " ")))
-          (unless (string-match-p "^ID" id)
-            (push (cons (format "%s: %s" id title) id) tickets)))
-        (forward-line))
-      (nreverse tickets))))
+  (let ((default-directory (or (ticket--root-directory) default-directory)))
+    (with-temp-buffer
+      (shell-command (format "%s list" ticket-executable) (current-buffer))
+      (goto-char (point-min))
+      (let ((tickets ()))
+        (while (not (eobp))
+          (let* ((line (buffer-substring-no-properties (line-beginning-position) (line-end-position)))
+                 (parts (split-string line " " t))
+                 (id (car parts))
+                 (title (string-join (cdr (cdr parts)) " ")))
+            (unless (string-match-p "^ID" id)
+              (push (cons (format "%s: %s" id title) id) tickets)))
+          (forward-line))
+        (nreverse tickets)))))
 
 ;;;###autoload
 (defun ticket-create (title)
   "Create a new ticket with TITLE and open it for editing."
   (interactive "sTicket title: ")
-  (let* ((ticket-id (string-trim (shell-command-to-string (format "%s create \"%s\"" ticket-executable title))))
+  (let* ((default-directory (or (ticket--root-directory) default-directory))
+         (ticket-id (string-trim (shell-command-to-string (format "%s create \"%s\"" ticket-executable title))))
          (ticket-file (expand-file-name (concat ticket-id ".md") (ticket-directory))))
     (find-file ticket-file)
     (goto-char (point-max))))
@@ -55,7 +61,8 @@ defaults to 'tk' which is expected to be in the path."
 (defun ticket-close ()
   "Select a ticket to close."
   (interactive)
-  (let* ((tickets (ticket--list-tickets))
+  (let* ((default-directory (or (ticket--root-directory) default-directory))
+         (tickets (ticket--list-tickets))
          (choice (completing-read "Close ticket: " tickets nil t))
          (ticket-id (cdr (assoc choice tickets))))
     (when ticket-id
