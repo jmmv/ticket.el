@@ -1,4 +1,4 @@
-;;; ticket.el --- A simple ticket management tool using `tk`
+;;; ticket.el --- A simple ticket management tool using `tk`  -*- lexical-binding: t -*-
 
 (require 'seq)
 (require 'cl-lib)
@@ -79,6 +79,10 @@ defaults to 'tk' which is expected to be in the path."
 
 (defvar-local ticket-browser--filter 'open-only
   "Current filter: `all' or `open-only'.")
+
+(defvar-local ticket-browser--selection-callback nil
+  "When non-nil, a function called with a ticket ID instead of
+opening it.  Used by `ticket-view-set-dep'.")
 
 (defun ticket-browser--parse-file (file)
   "Parse ticket FILE. Returns a plist or nil."
@@ -267,24 +271,30 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
 
 ;;;###autoload
 (defun ticket-browser-open-ticket ()
-  "Open ticket at point in editor."
+  "Open ticket at point, or call selection callback if set."
   (interactive)
   (let ((id (ticket-browser--ticket-at-point)))
     (when id
-      (let ((file (expand-file-name (concat id ".md") (ticket-directory))))
-        (when (file-exists-p file)
-          (find-file file)
-          (goto-char (point-min))
-          (if (re-search-forward "^# " nil t)
-              (progn
-                (end-of-line)
-                (forward-line)
-                (skip-chars-forward " \t\n\r"))
+      (if ticket-browser--selection-callback
+          (let ((callback ticket-browser--selection-callback))
+            (setq ticket-browser--selection-callback nil)
+            (quit-window)
+            (funcall callback id))
+        ;; Normal: open the ticket file and position point
+        (let ((file (expand-file-name (concat id ".md") (ticket-directory))))
+          (when (file-exists-p file)
+            (find-file file)
             (goto-char (point-min))
-            (when (search-forward "---" nil t)
+            (if (re-search-forward "^# " nil t)
+                (progn
+                  (end-of-line)
+                  (forward-line)
+                  (skip-chars-forward " \t\n\r"))
+              (goto-char (point-min))
               (when (search-forward "---" nil t)
-                (forward-line)
-                (beginning-of-line)))))))))
+                (when (search-forward "---" nil t)
+                  (forward-line)
+                  (beginning-of-line))))))))))
 
 ;;;###autoload
 (defun ticket-browser-toggle ()
@@ -450,7 +460,138 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
    ("c" "Create ticket" ticket-create)
    ("l" "List open tickets" ticket-browser)
    ("L" "List all tickets" ticket-browser-all)
-   ("C" "Close ticket" ticket-close)])
+   ("C" "Close ticket" ticket-close)]
+  ["Current ticket"
+   :if (lambda () (bound-and-true-p ticket-view-mode))
+   ("s d"   "Add dependency"  ticket-view-set-dep)
+   ("s p"   "Set parent"      ticket-view-set-parent)
+   ("s s c" "Close"           ticket-view-set-status-closed)
+   ("s s o" "Reopen"          ticket-view-set-status-open)
+   ("s t t" "Set type: task"  ticket-view-set-type-task)
+   ("s t e" "Set type: epic"  ticket-view-set-type-epic)])
+
+;; ==================== ticket-view-mode ====================
+
+(defvar ticket-view-mode-map
+  (let ((map (make-sparse-keymap)))
+    (let ((s-map (make-sparse-keymap)))
+      (let ((ss-map (make-sparse-keymap))
+            (st-map (make-sparse-keymap)))
+        (define-key ss-map "c" #'ticket-view-set-status-closed)
+        (define-key ss-map "o" #'ticket-view-set-status-open)
+        (define-key st-map "t" #'ticket-view-set-type-task)
+        (define-key st-map "e" #'ticket-view-set-type-epic)
+        (define-key s-map "d" #'ticket-view-set-dep)
+        (define-key s-map "p" #'ticket-view-set-parent)
+        (define-key s-map "s" ss-map)
+        (define-key s-map "t" st-map))
+      (define-key map (kbd "C-c k s") s-map))
+    map)
+  "Keymap for `ticket-view-mode'.")
+
+(define-minor-mode ticket-view-mode
+  "Minor mode active when visiting a ticket file under .tickets/.
+Provides keybindings to manipulate the ticket's fields without
+leaving the buffer."
+  :lighter " Ticket")
+
+(defun ticket-view--maybe-activate ()
+  "Activate `ticket-view-mode' if the current file is a ticket."
+  (when (and buffer-file-name
+             (string-match-p "/\\.tickets/[^/]+\\.md\\'" buffer-file-name))
+    (ticket-view-mode 1)))
+
+(add-hook 'find-file-hook #'ticket-view--maybe-activate)
+
+(defun ticket-view--current-id ()
+  "Return the ticket ID for the current buffer (from its filename)."
+  (file-name-sans-extension
+   (file-name-nondirectory buffer-file-name)))
+
+(defun ticket-view--set-frontmatter-field (field value)
+  "Set FIELD to VALUE in the YAML frontmatter of the current buffer."
+  (save-excursion
+    (goto-char (point-min))
+    (when (looking-at-p "^---[ \t]*$")
+      (forward-line)
+      (let ((fm-start (point)))
+        (when (re-search-forward "^---[ \t]*$" nil t)
+          (let ((fm-end (match-beginning 0)))
+            (goto-char fm-start)
+            (when (re-search-forward
+                   (format "^%s:[ \t]*.*$" (regexp-quote field))
+                   fm-end t)
+              (replace-match (format "%s: %s" field value)))))))))
+
+(defun ticket-view-set-status-closed ()
+  "Close the current ticket."
+  (interactive)
+  (let ((id (ticket-view--current-id))
+        (default-directory (or (ticket--root-directory) default-directory)))
+    (shell-command (format "%s close %s" ticket-executable id))
+    (revert-buffer nil t)
+    (message "Ticket %s closed." id)))
+
+(defun ticket-view-set-status-open ()
+  "Reopen the current ticket."
+  (interactive)
+  (let ((id (ticket-view--current-id))
+        (default-directory (or (ticket--root-directory) default-directory)))
+    (shell-command (format "%s reopen %s" ticket-executable id))
+    (revert-buffer nil t)
+    (message "Ticket %s reopened." id)))
+
+(defun ticket-view-set-type-task ()
+  "Set the current ticket's type to 'task'."
+  (interactive)
+  (ticket-view--set-frontmatter-field "type" "task")
+  (save-buffer)
+  (message "Type set to 'task'."))
+
+(defun ticket-view-set-type-epic ()
+  "Set the current ticket's type to 'epic'."
+  (interactive)
+  (ticket-view--set-frontmatter-field "type" "epic")
+  (save-buffer)
+  (message "Type set to 'epic'."))
+
+(defun ticket-view-set-dep ()
+  "Add a dependency to the current ticket via the ticket browser.
+Opens the browser in selection mode; press RET on a ticket to add
+it as a dependency, or q to cancel."
+  (interactive)
+  (let ((id (ticket-view--current-id))
+        (source-buffer (current-buffer)))
+    (ticket-browser-all)
+    (with-current-buffer (get-buffer "*tickets*")
+      (setq ticket-browser--selection-callback
+            (lambda (dep-id)
+              (let ((default-directory
+                     (with-current-buffer source-buffer
+                       (or (ticket--root-directory) default-directory))))
+                (shell-command
+                 (format "%s dep %s %s" ticket-executable id dep-id))
+                (with-current-buffer source-buffer
+                  (revert-buffer nil t))
+                (message "Added %s as dependency of %s." dep-id id)))))
+    (message "Select dependency (RET to confirm, q to cancel).")))
+
+(defun ticket-view-set-parent ()
+  "Set the parent of the current ticket via the ticket browser.
+Opens the browser in selection mode; press RET on a ticket to set
+it as the parent, or q to cancel."
+  (interactive)
+  (let ((source-buffer (current-buffer)))
+    (ticket-browser-all)
+    (with-current-buffer (get-buffer "*tickets*")
+      (setq ticket-browser--selection-callback
+            (lambda (parent-id)
+              (with-current-buffer source-buffer
+                (ticket-view--set-frontmatter-field "parent" parent-id)
+                (save-buffer)
+                (message "Parent of %s set to %s."
+                         (ticket-view--current-id) parent-id)))))
+    (message "Select parent ticket (RET to confirm, q to cancel).")))
 
 (provide 'ticket)
 ;;; ticket.el ends here

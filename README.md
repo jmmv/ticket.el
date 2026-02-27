@@ -15,6 +15,9 @@ interactive tree-based browser for navigating tickets and their dependencies.
   browser without opening the file.
 - **Filter modes** — show only open/in-progress tickets or all tickets including
   closed ones.
+- **Ticket view minor mode** — auto-activates on `.tickets/*.md` files and
+  exposes commands for editing status, type, dependencies, and parent without
+  leaving the buffer.
 - **Evil mode support** — keybindings are also registered in Evil's motion state.
 
 ## Prerequisites
@@ -116,6 +119,60 @@ Inside the `*tickets*` browser buffer:
 | `+`   | Increase priority of ticket at point (P0 = highest) |
 | `-`   | Decrease priority of ticket at point           |
 | `q`   | Quit the browser window                        |
+
+### Ticket view minor mode
+
+`ticket-view-mode` is a minor mode that activates automatically whenever you
+open a file matching `.tickets/*.md`.  It is indicated by the ` Ticket` lighter
+in the mode line.
+
+The mode adds commands to manipulate the ticket's fields without leaving the
+buffer:
+
+- **Status** — close or reopen the ticket (delegates to `tk`; the buffer is
+  reloaded automatically).
+- **Type** — switch between `task` and `epic` by editing the frontmatter field
+  in place.
+- **Dependency** — open the ticket browser in *selection mode*; press `RET` on
+  any ticket to record it as a dependency, or `q` to cancel.
+- **Parent** — open the browser in selection mode; press `RET` to set the
+  chosen ticket as the parent (written directly to the frontmatter).
+
+#### Standard Emacs keybindings (`C-c k` prefix)
+
+| Key           | Action                     |
+|---------------|----------------------------|
+| `C-c k s d`   | Add dependency             |
+| `C-c k s p`   | Set parent                 |
+| `C-c k s s c` | Close ticket               |
+| `C-c k s s o` | Reopen ticket              |
+| `C-c k s t t` | Set type to `task`         |
+| `C-c k s t e` | Set type to `epic`         |
+
+#### Evil / transient menu (`SPC k`)
+
+When `ticket-view-mode` is active the transient menu (`ticket-transient`, bound
+to `SPC k` in the Doom example) gains a **"Current ticket"** section:
+
+| Key     | Action             |
+|---------|--------------------|
+| `s d`   | Add dependency     |
+| `s p`   | Set parent         |
+| `s s c` | Close              |
+| `s s o` | Reopen             |
+| `s t t` | Set type: task     |
+| `s t e` | Set type: epic     |
+
+The "Current ticket" section is absent when `ticket-view-mode` is not active
+(i.e., in non-ticket buffers), so `SPC k` continues to work unchanged
+everywhere else.
+
+#### Selection mode in the browser
+
+When `ticket-view-set-dep` or `ticket-view-set-parent` opens the browser, the
+status bar shows `Select … (RET to confirm, q to cancel)`.  Pressing `RET` on
+a ticket calls the appropriate action and returns focus to the source ticket
+buffer.  Pressing `q` closes the browser without making any changes.
 
 ### Ticket file format
 
