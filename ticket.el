@@ -568,8 +568,7 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
   "Ticket management commands."
   ["Ticket"
    ("c" "Create ticket" ticket-create)
-   ("l" "List open tickets" ticket-browser)
-   ("L" "List all tickets" ticket-browser-all)
+   ("b" "Browse tickets" ticket-browser)
    ("C" "Close ticket" ticket-close)]
   ["Current ticket"
    :if (lambda () (bound-and-true-p ticket-view-mode))

@@ -241,4 +241,12 @@
         (when (buffer-live-p browser-buffer)
           (kill-buffer browser-buffer))))))
 
+(ert-deftest ticket-test-transient-uses-browse-keybinding ()
+  (let* ((suffix (transient-get-suffix 'ticket-transient "b"))
+         (spec (caddr suffix)))
+    (should (equal (plist-get spec :description) "Browse tickets"))
+    (should (eq (plist-get spec :command) 'ticket-browser))
+    (should-error (transient-get-suffix 'ticket-transient "l"))
+    (should-error (transient-get-suffix 'ticket-transient "L"))))
+
 ;;; test-ticket.el ends here

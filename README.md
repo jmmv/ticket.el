@@ -106,8 +106,7 @@ Invoke `ticket-transient` (or whatever key you bound it to) to open the menu:
 | Key | Action                              |
 |-----|-------------------------------------|
 | `c` | Create a new ticket                 |
-| `l` | Open browser (open tickets only)    |
-| `L` | Open browser (all tickets)          |
+| `b` | Browse tickets                      |
 | `C` | Close a ticket (completing-read)    |
 
 ### Ticket browser keybindings
