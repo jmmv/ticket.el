@@ -18,15 +18,9 @@
   :group 'applications)
 
 (defcustom ticket-executable
-  (let ((repo-script (and load-file-name
-                          (expand-file-name "../../repos/ticket/ticket" (file-name-directory load-file-name)))))
-    (if (and repo-script (file-executable-p repo-script))
-        repo-script
-      (executable-find "tk")))
-  "The path to the 'ticket' executable.
-If 'ticket.el' is loaded from a git repository, this defaults
-to the 'ticket' script in the repository. Otherwise, it
-defaults to 'tk' which is expected to be in the path."
+  (executable-find "tk")
+  "The path to the 'tk' executable.
+Defaults to 'tk' found in the path."
   :type 'string
   :group 'ticket)
 
