@@ -23,6 +23,18 @@
          (progn ,@body)
        (delete-directory project-root t))))
 
+(defun ticket-test--buffer-ticket-ids ()
+  "Return ticket IDs from current browser buffer in display order."
+  (let ((ids '()))
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((id (get-text-property (point) 'ticket-browser-id)))
+          (when id
+            (push id ids)))
+        (forward-line 1)))
+    (nreverse ids)))
+
 (ert-deftest ticket-test-parse-file-with-full-frontmatter ()
   (ticket-test--with-temp-project
     (let ((file (expand-file-name "abc123.md" tickets-dir)))
@@ -34,6 +46,7 @@
         "status: in_progress\n"
         "priority: 0\n"
         "type: epic\n"
+        "deps: [dep01, dep02]\n"
         "parent: root01\n"
         "---\n"
         "# Implement feature\n"))
@@ -43,6 +56,7 @@
         (should (equal "in_progress" (plist-get ticket :status)))
         (should (equal "0" (plist-get ticket :priority)))
         (should (equal "epic" (plist-get ticket :type)))
+        (should (equal '("dep01" "dep02") (plist-get ticket :deps)))
         (should (equal "root01" (plist-get ticket :parent)))
         (should (equal "Implement feature" (plist-get ticket :title)))))))
 
@@ -61,6 +75,7 @@
         (should (equal "open" (plist-get ticket :status)))
         (should (equal "2" (plist-get ticket :priority)))
         (should (equal "task" (plist-get ticket :type)))
+        (should (equal '() (plist-get ticket :deps)))
         (should (null (plist-get ticket :parent)))
         (should (equal "Basic ticket" (plist-get ticket :title)))))))
 
@@ -91,6 +106,41 @@
     (should
      (equal '("root" "orphan")
             (ticket-browser--get-roots tickets id-table)))))
+
+(ert-deftest ticket-test-sort-ids-by-priority-prefers-dependencies-as-tiebreaker ()
+  (let* ((tickets (list (list :id "x" :priority "1" :deps '("y"))
+                        (list :id "y" :priority "1" :deps '())
+                        (list :id "z" :priority "0" :deps '())))
+         (id-table (car (ticket-browser--build-graph tickets))))
+    (should (equal '("z" "y" "x")
+                   (ticket-browser--sort-ids-by-priority '("x" "y" "z") id-table)))))
+
+(ert-deftest ticket-test-sort-ids-by-priority-keeps-deterministic-order-for-cycles ()
+  (let* ((tickets (list (list :id "a" :priority "1" :deps '("b"))
+                        (list :id "b" :priority "1" :deps '("a"))))
+         (id-table (car (ticket-browser--build-graph tickets))))
+    (should (equal '("a" "b")
+                   (ticket-browser--sort-ids-by-priority '("b" "a") id-table)))))
+
+(ert-deftest ticket-test-render-tree-orders-same-priority-roots-by-dependency ()
+  (let* ((tickets (list (list :id "x" :status "open" :priority "1" :type "task" :deps '("y") :parent nil :title "X")
+                        (list :id "y" :status "open" :priority "1" :type "task" :deps '() :parent nil :title "Y")))
+         (graph (ticket-browser--build-graph tickets)))
+    (with-temp-buffer
+      (setq-local ticket-browser--expanded (make-hash-table :test 'equal))
+      (ticket-browser--render-tree tickets graph 'all)
+      (should (equal '("y" "x") (ticket-test--buffer-ticket-ids))))))
+
+(ert-deftest ticket-test-render-tree-orders-same-priority-siblings-by-dependency ()
+  (let* ((tickets (list (list :id "p" :status "open" :priority "0" :type "epic" :deps '() :parent nil :title "Parent")
+                        (list :id "x" :status "open" :priority "1" :type "task" :deps '("y") :parent "p" :title "X")
+                        (list :id "y" :status "open" :priority "1" :type "task" :deps '() :parent "p" :title "Y")))
+         (graph (ticket-browser--build-graph tickets)))
+    (with-temp-buffer
+      (setq-local ticket-browser--expanded (make-hash-table :test 'equal))
+      (puthash "p" t ticket-browser--expanded)
+      (ticket-browser--render-tree tickets graph 'all)
+      (should (equal '("p" "y" "x") (ticket-test--buffer-ticket-ids))))))
 
 (ert-deftest ticket-test-render-tree-respects-filter ()
   (let* ((tickets (list (list :id "a" :status "open" :priority "1" :type "task" :parent nil :title "Root")

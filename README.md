@@ -10,7 +10,8 @@ interactive tree-based browser for navigating tickets and their dependencies.
 - **Transient menu** — a single entry point (`ticket-transient`) for creating,
   listing, and closing tickets.
 - **Ticket browser** — a read-only buffer (`*tickets*`) that renders tickets as
-  a collapsible dependency tree, sorted by priority.
+  a collapsible dependency tree, sorted by priority with dependency-aware
+  tie-breaking for equal-priority siblings and roots.
 - **Inline priority editing** — raise or lower ticket priority directly from the
   browser without opening the file.
 - **Filter modes** — show only open/in-progress tickets or all tickets including
@@ -219,6 +220,8 @@ In the browser, each ticket is shown as:
 - `▶` — collapsed node with children
 - `▼` — expanded node with children
 - `•` — leaf node (no children)
+- Tickets are sorted by priority first; for equal-priority root/sibling groups,
+  dependencies are shown before dependents when possible.
 - In-progress tickets are highlighted with the `warning` face.
 - Closed tickets are rendered with the `shadow` face.
 

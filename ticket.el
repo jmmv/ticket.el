@@ -178,6 +178,71 @@ opening it.  Used by `ticket-view-set-dep'.")
      ticket-view--return-window
      ticket-view--return-buffer)))
 
+(defun ticket-browser--parse-id-list (value)
+  "Parse VALUE as a list of ticket ids.
+Understands tk's inline YAML list format like \"[a, b]\"."
+  (let* ((trimmed (string-trim (or value "")))
+         (content (if (and (string-prefix-p "[" trimmed)
+                           (string-suffix-p "]" trimmed))
+                      (substring trimmed 1 -1)
+                    trimmed)))
+    (if (string-empty-p (string-trim content))
+        '()
+      (seq-filter (lambda (id) (not (string-empty-p id)))
+                  (mapcar #'string-trim (split-string content "," t))))))
+
+(defun ticket-browser--ticket-priority (id id-table)
+  "Return numeric priority for ID from ID-TABLE."
+  (let ((ticket (gethash id id-table)))
+    (if ticket
+        (string-to-number (or (plist-get ticket :priority) "2"))
+      2)))
+
+(defun ticket-browser--sort-ids-by-dependency (ids id-table)
+  "Sort IDS so dependencies appear before dependents when possible.
+Only dependencies within IDS are considered.  Cycles or ambiguous nodes
+fall back to lexicographic id order."
+  (let ((id-set (make-hash-table :test 'equal))
+        (in-degree (make-hash-table :test 'equal))
+        (edges (make-hash-table :test 'equal))
+        (seen (make-hash-table :test 'equal))
+        (ready '())
+        (ordered '()))
+    (dolist (id ids)
+      (puthash id t id-set)
+      (puthash id 0 in-degree)
+      (puthash id '() edges))
+    (dolist (id ids)
+      (let ((ticket (gethash id id-table)))
+        (dolist (dep (or (plist-get ticket :deps) '()))
+          (when (and (not (equal dep id))
+                     (gethash dep id-set)
+                     (not (member id (gethash dep edges '()))))
+            (puthash dep (cons id (gethash dep edges '())) edges)
+            (puthash id (1+ (gethash id in-degree 0)) in-degree)))))
+    (maphash (lambda (id degree)
+               (when (zerop degree)
+                 (push id ready)))
+             in-degree)
+    (setq ready (sort ready #'string<))
+    (while ready
+      (let ((id (pop ready)))
+        (unless (gethash id seen)
+          (puthash id t seen)
+          (push id ordered)
+          (dolist (dependent (gethash id edges '()))
+            (let ((degree (1- (gethash dependent in-degree 0))))
+              (puthash dependent degree in-degree)
+              (when (zerop degree)
+                (push dependent ready))))
+          (setq ready (sort ready #'string<)))))
+    (setq ordered (nreverse ordered))
+    (let ((remaining '()))
+      (dolist (id ids)
+        (unless (gethash id seen)
+          (push id remaining)))
+      (append ordered (sort remaining #'string<)))))
+
 (defun ticket-browser--parse-file (file)
   "Parse ticket FILE. Returns a plist or nil."
   (with-temp-buffer
@@ -188,7 +253,7 @@ opening it.  Used by `ticket-view-set-dep'.")
       (let ((frontmatter-start (point)))
         (when (re-search-forward "^---[ \t]*$" nil t)
           (let ((fm (buffer-substring-no-properties frontmatter-start (match-beginning 0)))
-                (id nil) (status nil) (priority nil) (type nil) (parent nil))
+                (id nil) (status nil) (priority nil) (type nil) (parent nil) (deps nil))
             (dolist (line (split-string fm "\n"))
               (cond
                ((string-match "^id:[ \t]*\\(.*\\)$" line)
@@ -199,6 +264,8 @@ opening it.  Used by `ticket-view-set-dep'.")
                 (setq priority (string-trim (match-string 1 line))))
                ((string-match "^type:[ \t]*\\(.*\\)$" line)
                 (setq type (string-trim (match-string 1 line))))
+               ((string-match "^deps:[ \t]*\\(.*\\)$" line)
+                (setq deps (ticket-browser--parse-id-list (match-string 1 line))))
                ((string-match "^parent:[ \t]*\\(.*\\)$" line)
                 (setq parent (string-trim (match-string 1 line))))))
             ;; Title comes from the first # heading in the body after frontmatter
@@ -210,6 +277,7 @@ opening it.  Used by `ticket-view-set-dep'.")
                       :status (or status "open")
                       :priority (or priority "2")
                       :type (or type "task")
+                      :deps (or deps '())
                       :parent parent
                       :title title
                       :file file)))))))))
@@ -252,14 +320,23 @@ Roots are tickets with no parent, or whose parent is unknown (not in id-table)."
     (nreverse roots)))
 
 (defun ticket-browser--sort-ids-by-priority (ids id-table)
-  "Sort IDS by ticket priority; lower priority number appears first."
-  (sort (copy-sequence ids)
-        (lambda (a b)
-          (let ((pa (let ((ta (gethash a id-table)))
-                      (if ta (string-to-number (or (plist-get ta :priority) "2")) 2)))
-                (pb (let ((tb (gethash b id-table)))
-                      (if tb (string-to-number (or (plist-get tb :priority) "2")) 2))))
-            (< pa pb)))))
+  "Sort IDS by priority and dependencies.
+Lower priority numbers appear first.  IDs with equal priority are then
+ordered so dependencies appear before dependents when possible."
+  (let ((groups (make-hash-table :test 'eql))
+        (priorities '()))
+    (dolist (id ids)
+      (let ((priority (ticket-browser--ticket-priority id id-table)))
+        (unless (gethash priority groups)
+          (push priority priorities))
+        (puthash priority (cons id (gethash priority groups '())) groups)))
+    (setq priorities (sort priorities #'<))
+    (let ((result '()))
+      (dolist (priority priorities)
+        (let* ((group (nreverse (gethash priority groups '())))
+               (sorted (ticket-browser--sort-ids-by-dependency group id-table)))
+          (setq result (append result sorted))))
+      result)))
 
 (defun ticket-browser--render-tree (tickets graph filter)
   "Render the ticket tree into the current buffer.
