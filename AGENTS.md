@@ -24,6 +24,8 @@ Before you start working on a change:
 
 When you are done making a change, run through this checklist:
 
+*   Make sure to add or update any tests in `test-ticket.el`. Then check that they pass with `emacs -Q --batch -L . -l test-ticket.el -f ert-run-tests-batch-and-exit`.
+
 *   Use `jj describe -m` and persist a commit message that explains, at a high level, what was changed and why. Avoid bulleted lists of things that changed. Keep the description user-friendly: do not list every minutia about code changes; those are explained by the diff itself. Use standard Git message formatting, with a short first line and paragraphs that don't exceed 72-75 characters.
 
 *   Update the `README.md` if necessary.

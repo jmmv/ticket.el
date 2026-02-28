@@ -215,3 +215,11 @@ In the browser, each ticket is shown as:
 - `•` — leaf node (no children)
 - In-progress tickets are highlighted with the `warning` face.
 - Closed tickets are rendered with the `shadow` face.
+
+## Running tests
+
+Run the ERT test suite in batch mode:
+
+```sh
+emacs -Q --batch -L . -l test-ticket.el -f ert-run-tests-batch-and-exit
+```
