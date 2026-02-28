@@ -649,6 +649,7 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
    ("C" "Close ticket" ticket-close)]
   ["Current ticket"
    :if (lambda () (bound-and-true-p ticket-view-mode))
+   ("o"     "Open ticket at point" ticket-view-open-ticket-at-point)
    ("s d"   "Add dependency"  ticket-view-set-dep)
    ("s p"   "Set parent"      ticket-view-set-parent)
    ("s s c" "Close"           ticket-view-set-status-closed)
@@ -671,6 +672,7 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
         (define-key s-map "p" #'ticket-view-set-parent)
         (define-key s-map "s" ss-map)
         (define-key s-map "t" st-map))
+      (define-key map (kbd "C-c k o") #'ticket-view-open-ticket-at-point)
       (define-key map (kbd "C-c k s") s-map))
     map)
   "Keymap for `ticket-view-mode'.")
@@ -730,6 +732,23 @@ leaving the buffer."
   "Set the current ticket's type to 'epic'."
   (interactive)
   (ticket-view--set-type "epic"))
+
+(defun ticket-view-open-ticket-at-point ()
+  "Open the ticket whose identifier is under point."
+  (interactive)
+  (let* ((id (save-excursion
+               (skip-chars-backward "[:alnum:]-")
+               (let ((start (point)))
+                 (skip-chars-forward "[:alnum:]-")
+                 (let ((candidate (buffer-substring-no-properties start (point))))
+                   (unless (string-empty-p candidate)
+                     candidate)))))
+         (file (and id (ticket--ticket-file id))))
+    (unless id
+      (user-error "No ticket identifier at point"))
+    (unless (and file (file-readable-p file))
+      (user-error "Ticket %s does not exist" id))
+    (find-file file)))
 
 (defun ticket-view-set-dep ()
   "Add a dependency to the current ticket via the ticket browser.

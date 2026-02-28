@@ -291,6 +291,66 @@
         (when (buffer-live-p browser-buffer)
           (kill-buffer browser-buffer))))))
 
+(ert-deftest ticket-test-view-open-ticket-at-point ()
+  (ticket-test--with-temp-project
+    (let* ((source-file (expand-file-name "abc.md" tickets-dir))
+           (target-file (expand-file-name "dep-01.md" tickets-dir)))
+      (ticket-test--write-file
+       source-file
+       (concat
+        "---\n"
+        "id: abc\n"
+        "deps: [dep-01]\n"
+        "---\n"
+        "# Example\n"))
+      (ticket-test--write-file
+       target-file
+       (concat
+        "---\n"
+        "id: dep-01\n"
+        "---\n"
+        "# Dependency\n"))
+      (with-current-buffer (find-file-noselect source-file)
+        (unwind-protect
+            (save-window-excursion
+              (switch-to-buffer (current-buffer))
+              (goto-char (point-min))
+              (search-forward "dep-01")
+              (backward-char 2)
+              (ticket-view-open-ticket-at-point)
+              (should (equal (buffer-file-name (current-buffer)) target-file)))
+          (let ((source-buffer (get-file-buffer source-file))
+                (target-buffer (get-file-buffer target-file)))
+            (when (buffer-live-p source-buffer)
+              (with-current-buffer source-buffer
+                (set-buffer-modified-p nil))
+              (kill-buffer source-buffer))
+            (when (buffer-live-p target-buffer)
+              (with-current-buffer target-buffer
+                (set-buffer-modified-p nil))
+              (kill-buffer target-buffer))))))))
+
+(ert-deftest ticket-test-view-open-ticket-at-point-errors-for-missing-ticket ()
+  (ticket-test--with-temp-project
+    (let ((source-file (expand-file-name "abc.md" tickets-dir)))
+      (ticket-test--write-file
+       source-file
+       (concat
+        "---\n"
+        "id: abc\n"
+        "parent: missing\n"
+        "---\n"
+        "# Example\n"))
+      (with-current-buffer (find-file-noselect source-file)
+        (unwind-protect
+            (progn
+              (goto-char (point-min))
+              (search-forward "missing")
+              (backward-char 1)
+              (should-error (ticket-view-open-ticket-at-point)))
+          (set-buffer-modified-p nil)
+          (kill-buffer (current-buffer)))))))
+
 (ert-deftest ticket-test-transient-uses-browse-keybinding ()
   (let* ((suffix (transient-get-suffix 'ticket-transient "b"))
          (spec (caddr suffix)))
@@ -298,5 +358,16 @@
     (should (eq (plist-get spec :command) 'ticket-browser))
     (should-error (transient-get-suffix 'ticket-transient "l"))
     (should-error (transient-get-suffix 'ticket-transient "L"))))
+
+(ert-deftest ticket-test-transient-includes-open-ticket-at-point ()
+  (let* ((ticket-view-mode t)
+         (suffix (transient-get-suffix 'ticket-transient "o"))
+         (spec (caddr suffix)))
+    (should (equal (plist-get spec :description) "Open ticket at point"))
+    (should (eq (plist-get spec :command) 'ticket-view-open-ticket-at-point))))
+
+(ert-deftest ticket-test-view-mode-map-binds-open-ticket-at-point ()
+  (should (eq (lookup-key ticket-view-mode-map (kbd "C-c k o"))
+              #'ticket-view-open-ticket-at-point)))
 
 ;;; test-ticket.el ends here

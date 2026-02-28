@@ -149,6 +149,7 @@ buffer:
 
 | Key           | Action                     |
 |---------------|----------------------------|
+| `C-c k o`     | Open ticket at point       |
 | `C-c k s d`   | Add dependency             |
 | `C-c k s p`   | Set parent                 |
 | `C-c k s s c` | Close ticket               |
@@ -163,6 +164,7 @@ to `SPC k` in the Doom example) gains a **"Current ticket"** section:
 
 | Key     | Action             |
 |---------|--------------------|
+| `o`     | Open ticket at point |
 | `s d`   | Add dependency     |
 | `s p`   | Set parent         |
 | `s s c` | Close              |
