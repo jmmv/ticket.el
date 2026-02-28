@@ -24,30 +24,100 @@ Defaults to 'tk' found in the path."
   :type 'string
   :group 'ticket)
 
+(defun ticket--run-tk (&rest args)
+  "Run `tk' with ARGS and return its exit code.
+Signals an error if `ticket-executable' is not configured."
+  (let ((default-directory (or (ticket--root-directory) default-directory)))
+    (unless ticket-executable
+      (user-error "ticket-executable is not configured"))
+    (apply #'process-file ticket-executable nil nil nil args)))
+
+(defun ticket--run-tk-checked (&rest args)
+  "Run `tk' with ARGS and signal an error on non-zero exit."
+  (let ((status (apply #'ticket--run-tk args)))
+    (unless (eq status 0)
+      (error "tk command failed (%s): %s" status (string-join args " ")))
+    status))
+
+(defun ticket--run-tk-to-string (&rest args)
+  "Run `tk' with ARGS and return stdout as a trimmed string."
+  (with-temp-buffer
+    (let ((status (apply #'ticket--run-tk-to-buffer (current-buffer) args)))
+      (unless (eq status 0)
+        (error "tk command failed (%s): %s" status (string-join args " ")))
+      (string-trim (buffer-string)))))
+
+(defun ticket--run-tk-to-buffer (buffer &rest args)
+  "Run `tk' with ARGS, sending stdout to BUFFER."
+  (let ((default-directory (or (ticket--root-directory) default-directory)))
+    (unless ticket-executable
+      (user-error "ticket-executable is not configured"))
+    (apply #'process-file ticket-executable nil buffer nil args)))
+
+(defun ticket--frontmatter-bounds ()
+  "Return the frontmatter bounds as (START . END), or nil."
+  (save-excursion
+    (goto-char (point-min))
+    (when (looking-at-p "^---[ \t]*$")
+      (forward-line)
+      (let ((fm-start (point)))
+        (when (re-search-forward "^---[ \t]*$" nil t)
+          (cons fm-start (match-beginning 0)))))))
+
+(defun ticket--set-frontmatter-field (field value &optional insert-if-missing)
+  "Set FIELD to VALUE in current buffer's frontmatter.
+When INSERT-IF-MISSING is non-nil, append FIELD before the closing
+frontmatter delimiter if the field is missing.
+Returns non-nil if the field was written."
+  (let ((bounds (ticket--frontmatter-bounds))
+        (updated nil))
+    (when bounds
+      (save-excursion
+        (goto-char (car bounds))
+        (if (re-search-forward
+             (format "^%s:[ \t]*.*$" (regexp-quote field))
+             (cdr bounds) t)
+            (progn
+              (replace-match (format "%s: %s" field value))
+              (setq updated t))
+          (when insert-if-missing
+            (goto-char (cdr bounds))
+            (insert (format "%s: %s\n" field value))
+            (setq updated t)))))
+    updated))
+
+(defun ticket--ticket-file (id)
+  "Return full path to ticket ID's file, or nil if no ticket dir."
+  (let ((dir (ticket-directory)))
+    (when dir
+      (expand-file-name (concat id ".md") dir))))
+
 (defun ticket--list-tickets ()
   "Return a list of open tickets."
-  (let ((default-directory (or (ticket--root-directory) default-directory)))
-    (with-temp-buffer
-      (shell-command (format "%s list" ticket-executable) (current-buffer))
-      (goto-char (point-min))
-      (let ((tickets ()))
-        (while (not (eobp))
-          (let* ((line (buffer-substring-no-properties (line-beginning-position) (line-end-position)))
-                 (parts (split-string line " " t))
-                 (id (car parts))
-                 (title (string-join (cdr (cdr parts)) " ")))
-            (unless (string-match-p "^ID" id)
-              (push (cons (format "%s: %s" id title) id) tickets)))
-          (forward-line))
-        (nreverse tickets)))))
+  (with-temp-buffer
+    (let ((status (ticket--run-tk-to-buffer (current-buffer) "list")))
+      (unless (eq status 0)
+        (error "tk command failed (%s): list" status)))
+    (goto-char (point-min))
+    (let ((tickets ()))
+      (while (not (eobp))
+        (let* ((line (buffer-substring-no-properties (line-beginning-position) (line-end-position)))
+               (parts (split-string line " " t))
+               (id (car parts))
+               (title (string-join (cddr parts) " ")))
+          (unless (or (null id) (string-match-p "^ID\\'" id))
+            (push (cons (format "%s: %s" id title) id) tickets)))
+        (forward-line))
+      (nreverse tickets))))
 
 ;;;###autoload
 (defun ticket-create (title)
   "Create a new ticket with TITLE and open it for editing."
   (interactive "sTicket title: ")
-  (let* ((default-directory (or (ticket--root-directory) default-directory))
-         (ticket-id (string-trim (shell-command-to-string (format "%s create \"%s\"" ticket-executable title))))
-         (ticket-file (expand-file-name (concat ticket-id ".md") (ticket-directory))))
+  (let* ((ticket-id (ticket--run-tk-to-string "create" title))
+         (ticket-file (ticket--ticket-file ticket-id)))
+    (unless ticket-file
+      (user-error "Cannot locate .tickets directory"))
     (find-file ticket-file)
     (goto-char (point-max))))
 
@@ -55,12 +125,11 @@ Defaults to 'tk' found in the path."
 (defun ticket-close ()
   "Select a ticket to close."
   (interactive)
-  (let* ((default-directory (or (ticket--root-directory) default-directory))
-         (tickets (ticket--list-tickets))
+  (let* ((tickets (ticket--list-tickets))
          (choice (completing-read "Close ticket: " tickets nil t))
          (ticket-id (cdr (assoc choice tickets))))
     (when ticket-id
-      (shell-command (format "%s close %s" ticket-executable ticket-id))
+      (ticket--run-tk-checked "close" ticket-id)
       (message "Ticket %s closed." ticket-id))))
 
 ;; ==================== ticket-browser ====================
@@ -339,50 +408,53 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
 
 (defun ticket-browser--set-priority (id new-priority)
   "Set priority of ticket ID to NEW-PRIORITY by editing its .md file directly."
-  (let ((file (expand-file-name (concat id ".md") (ticket-directory))))
-    (when (file-exists-p file)
+  (let ((file (ticket--ticket-file id)))
+    (when (and file (file-exists-p file))
       (with-temp-buffer
         (insert-file-contents file)
-        (goto-char (point-min))
-        (when (looking-at "^---[ \t]*$")
-          (forward-line)
-          (let ((fm-start (point)))
-            (when (re-search-forward "^---[ \t]*$" nil t)
-              (let ((fm-end (match-beginning 0)))
-                (goto-char fm-start)
-                (if (re-search-forward "^priority:[ \t]*.*$" fm-end t)
-                    (replace-match (format "priority: %d" new-priority))
-                  (goto-char fm-end)
-                  (insert (format "priority: %d\n" new-priority)))))))
+        (ticket--set-frontmatter-field "priority"
+                                       (number-to-string new-priority)
+                                       t)
         (write-region (point-min) (point-max) file nil 'silent)))))
+
+(defun ticket-browser--ticket-by-id (id)
+  "Return loaded ticket plist for ID, or nil."
+  (seq-find (lambda (ticket) (equal (plist-get ticket :id) id))
+            ticket-browser--tickets))
+
+(defun ticket-browser--adjust-priority (delta &optional min-priority)
+  "Adjust priority of ticket at point by DELTA.
+When MIN-PRIORITY is non-nil, clamp to that minimum."
+  (let ((id (ticket-browser--ticket-at-point)))
+    (when id
+      (let* ((ticket (ticket-browser--ticket-by-id id))
+             (current (string-to-number (or (plist-get ticket :priority) "2")))
+             (candidate (+ current delta))
+             (new-priority (if min-priority
+                               (max min-priority candidate)
+                             candidate)))
+        (ticket-browser--set-priority id new-priority)
+        (ticket-browser-refresh)
+        (message "Ticket %s priority: P%d" id new-priority)))))
 
 ;;;###autoload
 (defun ticket-browser-increase-priority ()
   "Increase priority of ticket at point (decrease number, min P0)."
   (interactive)
-  (let ((id (ticket-browser--ticket-at-point)))
-    (when id
-      (let* ((ticket (seq-find (lambda (tkt) (equal (plist-get tkt :id) id))
-                               ticket-browser--tickets))
-             (current (string-to-number (or (plist-get ticket :priority) "2")))
-             (new-priority (max 0 (1- current))))
-        (ticket-browser--set-priority id new-priority)
-        (ticket-browser-refresh)
-        (message "Ticket %s priority: P%d" id new-priority)))))
+  (ticket-browser--adjust-priority -1 0))
 
 ;;;###autoload
 (defun ticket-browser-decrease-priority ()
   "Decrease priority of ticket at point (increase number, no limit)."
   (interactive)
-  (let ((id (ticket-browser--ticket-at-point)))
-    (when id
-      (let* ((ticket (seq-find (lambda (tkt) (equal (plist-get tkt :id) id))
-                               ticket-browser--tickets))
-             (current (string-to-number (or (plist-get ticket :priority) "2")))
-             (new-priority (1+ current)))
-        (ticket-browser--set-priority id new-priority)
-        (ticket-browser-refresh)
-        (message "Ticket %s priority: P%d" id new-priority)))))
+  (ticket-browser--adjust-priority 1))
+
+(defun ticket-browser--make-filter-map ()
+  "Build the keymap for browser filter commands."
+  (let ((map (make-sparse-keymap)))
+    (define-key map "o" 'ticket-browser-show-open-only)
+    (define-key map "a" 'ticket-browser-show-all)
+    map))
 
 (define-derived-mode ticket-browser-mode special-mode "Tickets"
   "Major mode for browsing tickets as a dependency tree.")
@@ -395,16 +467,11 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
 (define-key ticket-browser-mode-map (kbd "q") 'quit-window)
 (define-key ticket-browser-mode-map (kbd "+") 'ticket-browser-increase-priority)
 (define-key ticket-browser-mode-map (kbd "-") 'ticket-browser-decrease-priority)
-(let ((s-map (make-sparse-keymap)))
-  (define-key s-map "o" 'ticket-browser-show-open-only)
-  (define-key s-map "a" 'ticket-browser-show-all)
-  (define-key ticket-browser-mode-map "s" s-map))
+(define-key ticket-browser-mode-map "s" (ticket-browser--make-filter-map))
 ;; evil-define-key is a macro and can't be called safely at byte-compile time;
 ;; use evil-define-key* (the underlying function) inside with-eval-after-load.
 (with-eval-after-load 'evil
-  (let ((s-map (make-sparse-keymap)))
-    (define-key s-map "o" 'ticket-browser-show-open-only)
-    (define-key s-map "a" 'ticket-browser-show-all)
+  (let ((s-map (ticket-browser--make-filter-map)))
     (evil-define-key* 'motion ticket-browser-mode-map
       (kbd "RET") #'ticket-browser-open-ticket
       (kbd "TAB") #'ticket-browser-toggle
@@ -504,50 +571,40 @@ leaving the buffer."
 
 (defun ticket-view--set-frontmatter-field (field value)
   "Set FIELD to VALUE in the YAML frontmatter of the current buffer."
-  (save-excursion
-    (goto-char (point-min))
-    (when (looking-at-p "^---[ \t]*$")
-      (forward-line)
-      (let ((fm-start (point)))
-        (when (re-search-forward "^---[ \t]*$" nil t)
-          (let ((fm-end (match-beginning 0)))
-            (goto-char fm-start)
-            (when (re-search-forward
-                   (format "^%s:[ \t]*.*$" (regexp-quote field))
-                   fm-end t)
-              (replace-match (format "%s: %s" field value)))))))))
+  (ticket--set-frontmatter-field field value t))
+
+(defun ticket-view--set-status (verb command)
+  "Run ticket status COMMAND and report VERB for current ticket."
+  (let ((id (ticket-view--current-id)))
+    (ticket--run-tk-checked command id)
+    (revert-buffer nil t)
+    (message "Ticket %s %s." id verb)))
 
 (defun ticket-view-set-status-closed ()
   "Close the current ticket."
   (interactive)
-  (let ((id (ticket-view--current-id))
-        (default-directory (or (ticket--root-directory) default-directory)))
-    (shell-command (format "%s close %s" ticket-executable id))
-    (revert-buffer nil t)
-    (message "Ticket %s closed." id)))
+  (ticket-view--set-status "closed" "close"))
 
 (defun ticket-view-set-status-open ()
   "Reopen the current ticket."
   (interactive)
-  (let ((id (ticket-view--current-id))
-        (default-directory (or (ticket--root-directory) default-directory)))
-    (shell-command (format "%s reopen %s" ticket-executable id))
-    (revert-buffer nil t)
-    (message "Ticket %s reopened." id)))
+  (ticket-view--set-status "reopened" "reopen"))
+
+(defun ticket-view--set-type (type)
+  "Set the current ticket's type field to TYPE."
+  (ticket-view--set-frontmatter-field "type" type)
+  (save-buffer)
+  (message "Type set to '%s'." type))
 
 (defun ticket-view-set-type-task ()
   "Set the current ticket's type to 'task'."
   (interactive)
-  (ticket-view--set-frontmatter-field "type" "task")
-  (save-buffer)
-  (message "Type set to 'task'."))
+  (ticket-view--set-type "task"))
 
 (defun ticket-view-set-type-epic ()
   "Set the current ticket's type to 'epic'."
   (interactive)
-  (ticket-view--set-frontmatter-field "type" "epic")
-  (save-buffer)
-  (message "Type set to 'epic'."))
+  (ticket-view--set-type "epic"))
 
 (defun ticket-view-set-dep ()
   "Add a dependency to the current ticket via the ticket browser.
@@ -563,8 +620,7 @@ it as a dependency, or q to cancel."
               (let ((default-directory
                      (with-current-buffer source-buffer
                        (or (ticket--root-directory) default-directory))))
-                (shell-command
-                 (format "%s dep %s %s" ticket-executable id dep-id))
+                (ticket--run-tk-checked "dep" id dep-id)
                 (with-current-buffer source-buffer
                   (revert-buffer nil t))
                 (message "Added %s as dependency of %s." dep-id id)))))

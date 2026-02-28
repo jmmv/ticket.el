@@ -65,9 +65,10 @@
         (should (equal "Basic ticket" (plist-get ticket :title)))))))
 
 (ert-deftest ticket-test-list-tickets-parses-command-output ()
-  (cl-letf (((symbol-function 'shell-command)
-             (lambda (_command output-buffer &rest _)
-               (with-current-buffer output-buffer
+  (cl-letf (((symbol-function 'process-file)
+             (lambda (_program _infile destination _display &rest args)
+               (should (equal '("list") args))
+               (with-current-buffer destination
                  (insert "ID Status Title\n")
                  (insert "abc open First ticket\n")
                  (insert "def in_progress Another one\n"))
@@ -127,10 +128,22 @@
     (should
      (string-match-p "^type: epic$" (buffer-string)))))
 
+(ert-deftest ticket-test-set-frontmatter-field-inserts-missing-entry ()
+  (with-temp-buffer
+    (insert
+     (concat
+      "---\n"
+      "id: abc\n"
+      "---\n"
+      "# Title\n"))
+    (ticket-view--set-frontmatter-field "parent" "root")
+    (should (string-match-p "^parent: root$" (buffer-string)))))
+
 (ert-deftest ticket-test-view-set-status-closed-issues-command ()
   (ticket-test--with-temp-project
     (let* ((file (expand-file-name "abc.md" tickets-dir))
-           (recorded-command nil)
+           (recorded-program nil)
+           (recorded-args nil)
            (reverted nil)
            (ticket-executable "tk"))
       (ticket-test--write-file
@@ -143,9 +156,10 @@
         "# Example\n"))
       (with-current-buffer (find-file-noselect file)
         (unwind-protect
-            (cl-letf (((symbol-function 'shell-command)
-                       (lambda (command &rest _)
-                         (setq recorded-command command)
+            (cl-letf (((symbol-function 'process-file)
+                       (lambda (program _infile _destination _display &rest args)
+                         (setq recorded-program program)
+                         (setq recorded-args args)
                          0))
                       ((symbol-function 'revert-buffer)
                        (lambda (&rest _)
@@ -153,7 +167,8 @@
               (ticket-view-set-status-closed))
           (set-buffer-modified-p nil)
           (kill-buffer (current-buffer))))
-      (should (equal "tk close abc" recorded-command))
+      (should (equal "tk" recorded-program))
+      (should (equal '("close" "abc") recorded-args))
       (should reverted))))
 
 ;;; test-ticket.el ends here
