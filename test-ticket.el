@@ -171,4 +171,74 @@
       (should (equal '("close" "abc") recorded-args))
       (should reverted))))
 
+(ert-deftest ticket-test-browser-open-ticket-restores-browser-on-kill ()
+  (ticket-test--with-temp-project
+    (let* ((file (expand-file-name "abc.md" tickets-dir))
+           (browser-buffer (get-buffer-create "*tickets-test*")))
+      (ticket-test--write-file
+       file
+       (concat
+        "---\n"
+        "id: abc\n"
+        "status: open\n"
+        "---\n"
+        "# Example\n"))
+      (unwind-protect
+          (save-window-excursion
+            (with-current-buffer browser-buffer
+              (ticket-browser-mode)
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (insert "abc  [P2] task  Example\n")
+                (goto-char (point-min))
+                (put-text-property (line-beginning-position)
+                                   (line-end-position)
+                                   'ticket-browser-id "abc"))
+              (goto-char (point-min)))
+            (switch-to-buffer browser-buffer)
+            (ticket-browser-open-ticket)
+            (let ((opened-buffer (current-buffer)))
+              (should (equal (buffer-file-name opened-buffer) file))
+              (kill-buffer opened-buffer)
+              (sleep-for 0.01)
+              (should (eq (window-buffer (selected-window)) browser-buffer))))
+        (when (buffer-live-p browser-buffer)
+          (kill-buffer browser-buffer))))))
+
+(ert-deftest ticket-test-browser-open-ticket-no-restore-when-disabled ()
+  (ticket-test--with-temp-project
+    (let* ((file (expand-file-name "abc.md" tickets-dir))
+           (browser-buffer (get-buffer-create "*tickets-test*"))
+           (ticket-browser-restore-on-ticket-close nil))
+      (ticket-test--write-file
+       file
+       (concat
+        "---\n"
+        "id: abc\n"
+        "status: open\n"
+        "---\n"
+        "# Example\n"))
+      (unwind-protect
+          (save-window-excursion
+            (with-current-buffer browser-buffer
+              (ticket-browser-mode)
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (insert "abc  [P2] task  Example\n")
+                (goto-char (point-min))
+                (put-text-property (line-beginning-position)
+                                   (line-end-position)
+                                   'ticket-browser-id "abc"))
+              (goto-char (point-min)))
+            (switch-to-buffer browser-buffer)
+            (ticket-browser-open-ticket)
+            (let ((opened-buffer (current-buffer)))
+              (should (equal (buffer-file-name opened-buffer) file))
+              (should-not (local-variable-p 'ticket-view--return-buffer opened-buffer))
+              (should-not (local-variable-p 'ticket-view--return-window opened-buffer))
+              (should-not (local-variable-p 'kill-buffer-hook opened-buffer))
+              (kill-buffer opened-buffer)))
+        (when (buffer-live-p browser-buffer)
+          (kill-buffer browser-buffer))))))
+
 ;;; test-ticket.el ends here

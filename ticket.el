@@ -24,6 +24,14 @@ Defaults to 'tk' found in the path."
   :type 'string
   :group 'ticket)
 
+(defcustom ticket-browser-restore-on-ticket-close t
+  "When non-nil, closing a ticket opened from the browser restores it.
+If enabled, opening a ticket from `*tickets*' records that browser
+buffer/window and killing the ticket buffer returns the same window to
+the browser."
+  :type 'boolean
+  :group 'ticket)
+
 (defun ticket--run-tk (&rest args)
   "Run `tk' with ARGS and return its exit code.
 Signals an error if `ticket-executable' is not configured."
@@ -146,6 +154,29 @@ Returns non-nil if the field was written."
 (defvar-local ticket-browser--selection-callback nil
   "When non-nil, a function called with a ticket ID instead of
 opening it.  Used by `ticket-view-set-dep'.")
+
+(defvar-local ticket-view--return-buffer nil
+  "Browser buffer to restore when this ticket buffer is closed.")
+
+(defvar-local ticket-view--return-window nil
+  "Window where the browser buffer should be restored.")
+
+(defun ticket-view--restore-browser-on-kill ()
+  "Restore the originating ticket browser in its window when closing."
+  (when (and ticket-view--return-window
+             (window-live-p ticket-view--return-window)
+             ticket-view--return-buffer
+             (buffer-live-p ticket-view--return-buffer))
+    ;; Run after kill-buffer finishes so other buffer replacement logic
+    ;; (e.g. framework-specific kill commands) doesn't override this.
+    (run-at-time
+     0 nil
+     (lambda (window buffer)
+       (when (and (window-live-p window)
+                  (buffer-live-p buffer))
+         (set-window-buffer window buffer)))
+     ticket-view--return-window
+     ticket-view--return-buffer)))
 
 (defun ticket-browser--parse-file (file)
   "Parse ticket FILE. Returns a plist or nil."
@@ -344,9 +375,27 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
             (quit-window)
             (funcall callback id))
         ;; Normal: open the ticket file and position point
-        (let ((file (expand-file-name (concat id ".md") (ticket-directory))))
+        (let ((browser-buffer (current-buffer))
+              (browser-window (selected-window))
+              (browser-window-point (point))
+              (browser-window-start (window-start))
+              (file (expand-file-name (concat id ".md") (ticket-directory))))
           (when (file-exists-p file)
             (find-file file)
+            (when ticket-browser-restore-on-ticket-close
+              ;; Seed previous-buffer history so generic kill-buffer flows
+              ;; naturally switch this window back to the browser.
+              (set-window-prev-buffers
+               browser-window
+               (cons (list browser-buffer
+                           (copy-marker browser-window-start)
+                           (copy-marker browser-window-point))
+                     (seq-remove (lambda (entry)
+                                   (eq (car entry) browser-buffer))
+                                 (window-prev-buffers browser-window))))
+              (setq-local ticket-view--return-buffer browser-buffer)
+              (setq-local ticket-view--return-window browser-window)
+              (add-hook 'kill-buffer-hook #'ticket-view--restore-browser-on-kill nil t))
             (goto-char (point-min))
             (if (re-search-forward "^# " nil t)
                 (progn

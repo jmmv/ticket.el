@@ -73,12 +73,19 @@ Clone the repository and add its directory to `load-path`:
 
 ## Configuration
 
-The only user-facing variable is `ticket-executable`, which controls the path
-to the `tk` binary.  It defaults to `tk` on the system `PATH`.  Override it
-if the binary lives elsewhere:
+`ticket.el` exposes two user-facing variables:
+
+- `ticket-executable` controls the path to the `tk` binary.  It defaults to
+  `tk` on the system `PATH`.
+- `ticket-browser-restore-on-ticket-close` controls whether killing a ticket
+  buffer opened from `*tickets*` returns that window to the browser.  Defaults
+  to `t`.
+
+Example overrides:
 
 ```elisp
 (setq ticket-executable "/path/to/tk")
+(setq ticket-browser-restore-on-ticket-close nil)
 ```
 
 ### Binding the transient menu
