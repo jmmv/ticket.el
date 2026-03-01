@@ -370,4 +370,14 @@
   (should (eq (lookup-key ticket-view-mode-map (kbd "C-c k o"))
               #'ticket-view-open-ticket-at-point)))
 
+(ert-deftest ticket-test-browser-mode-map-binds-priority-and-tree-shortcuts ()
+  (should (eq (lookup-key ticket-browser-mode-map (kbd "<"))
+              #'ticket-browser-increase-priority))
+  (should (eq (lookup-key ticket-browser-mode-map (kbd ">"))
+              #'ticket-browser-decrease-priority))
+  (should (eq (lookup-key ticket-browser-mode-map (kbd "["))
+              #'ticket-browser-collapse-all))
+  (should (eq (lookup-key ticket-browser-mode-map (kbd "]"))
+              #'ticket-browser-expand-all)))
+
 ;;; test-ticket.el ends here

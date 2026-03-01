@@ -587,12 +587,12 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
 
 (define-key ticket-browser-mode-map (kbd "RET") 'ticket-browser-open-ticket)
 (define-key ticket-browser-mode-map (kbd "TAB") 'ticket-browser-toggle)
-(define-key ticket-browser-mode-map (kbd "<") 'ticket-browser-collapse-all)
-(define-key ticket-browser-mode-map (kbd ">") 'ticket-browser-expand-all)
+(define-key ticket-browser-mode-map (kbd "[") 'ticket-browser-collapse-all)
+(define-key ticket-browser-mode-map (kbd "]") 'ticket-browser-expand-all)
 (define-key ticket-browser-mode-map (kbd "g") 'ticket-browser-refresh)
 (define-key ticket-browser-mode-map (kbd "q") 'quit-window)
-(define-key ticket-browser-mode-map (kbd "+") 'ticket-browser-increase-priority)
-(define-key ticket-browser-mode-map (kbd "-") 'ticket-browser-decrease-priority)
+(define-key ticket-browser-mode-map (kbd "<") 'ticket-browser-increase-priority)
+(define-key ticket-browser-mode-map (kbd ">") 'ticket-browser-decrease-priority)
 (define-key ticket-browser-mode-map "s" (ticket-browser--make-filter-map))
 ;; evil-define-key is a macro and can't be called safely at byte-compile time;
 ;; use evil-define-key* (the underlying function) inside with-eval-after-load.
@@ -601,13 +601,13 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
     (evil-define-key* 'motion ticket-browser-mode-map
       (kbd "RET") #'ticket-browser-open-ticket
       (kbd "TAB") #'ticket-browser-toggle
-      "<" #'ticket-browser-collapse-all
-      ">" #'ticket-browser-expand-all
+      "[" #'ticket-browser-collapse-all
+      "]" #'ticket-browser-expand-all
       "g" #'ticket-browser-refresh
       "q" #'quit-window
       "s" s-map
-      "+" #'ticket-browser-increase-priority
-      "-" #'ticket-browser-decrease-priority)))
+      "<" #'ticket-browser-increase-priority
+      ">" #'ticket-browser-decrease-priority)))
 
 (defun ticket-browser--open (filter)
   "Open the ticket browser with FILTER (`open-only' or `all')."

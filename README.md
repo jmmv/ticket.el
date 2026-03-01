@@ -118,13 +118,13 @@ Inside the `*tickets*` browser buffer:
 |-------|------------------------------------------------|
 | `RET` | Open the ticket file at point                  |
 | `TAB` | Toggle expand/collapse of node at point        |
-| `<`   | Collapse all nodes                             |
-| `>`   | Expand all nodes                               |
+| `[`   | Collapse all nodes                             |
+| `]`   | Expand all nodes                               |
 | `g`   | Refresh — reload tickets from disk             |
 | `s o` | Filter: show open and in-progress tickets only |
 | `s a` | Filter: show all tickets including closed      |
-| `+`   | Increase priority of ticket at point (P0 = highest) |
-| `-`   | Decrease priority of ticket at point           |
+| `<`   | Increase priority of ticket at point (P0 = highest) |
+| `>`   | Decrease priority of ticket at point           |
 | `q`   | Quit the browser window                        |
 
 ### Ticket view minor mode
