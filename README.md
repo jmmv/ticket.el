@@ -117,9 +117,8 @@ Inside the `*tickets*` browser buffer:
 | Key   | Action                                         |
 |-------|------------------------------------------------|
 | `RET` | Open the ticket file at point                  |
-| `TAB` | Toggle expand/collapse of node at point        |
-| `[`   | Collapse all nodes                             |
-| `]`   | Expand all nodes                               |
+| `TAB` | Expand current node; press again to expand all |
+| `S-TAB` | Collapse all except current; press again to collapse current |
 | `g`   | Refresh — reload tickets from disk             |
 | `s o` | Filter: show open and in-progress tickets only |
 | `s a` | Filter: show all tickets including closed      |

@@ -35,6 +35,16 @@
         (forward-line 1)))
     (nreverse ids)))
 
+(defun ticket-test--goto-ticket-id (id)
+  "Move point to ticket line for ID in the current browser buffer."
+  (goto-char (point-min))
+  (let ((found nil))
+    (while (and (not found) (not (eobp)))
+      (if (equal id (get-text-property (point) 'ticket-browser-id))
+          (setq found t)
+        (forward-line 1)))
+    (should found)))
+
 (ert-deftest ticket-test-parse-file-with-full-frontmatter ()
   (ticket-test--with-temp-project
     (let ((file (expand-file-name "abc123.md" tickets-dir)))
@@ -164,6 +174,67 @@
       (puthash "a" t ticket-browser--expanded)
       (ticket-browser--render-tree tickets graph 'all)
       (should (string-match-p "\\bb\\b" (buffer-string))))))
+
+(ert-deftest ticket-test-browser-expand-cycle-expands-current-then-all ()
+  (let ((ticket-browser--tickets
+         (list (list :id "a" :status "open" :priority "1" :type "task" :parent nil :title "A")
+               (list :id "a1" :status "open" :priority "1" :type "task" :parent "a" :title "A1")
+               (list :id "c" :status "open" :priority "1" :type "task" :parent nil :title "C"))))
+    (with-temp-buffer
+      (ticket-browser-mode)
+      (setq-local ticket-browser--expanded (make-hash-table :test 'equal))
+      (setq-local ticket-browser--filter 'all)
+      (ticket-browser--redisplay)
+      (ticket-test--goto-ticket-id "a")
+      (ticket-browser-expand-cycle)
+      (should (eq t (gethash "a" ticket-browser--expanded)))
+      (should-not (gethash "a1" ticket-browser--expanded))
+      (should-not (gethash "c" ticket-browser--expanded))
+      (ticket-test--goto-ticket-id "a")
+      (ticket-browser-expand-cycle)
+      (dolist (ticket ticket-browser--tickets)
+        (should (eq t (gethash (plist-get ticket :id) ticket-browser--expanded)))))))
+
+(ert-deftest ticket-test-browser-collapse-cycle-collapses-others-then-current ()
+  (let ((ticket-browser--tickets
+         (list (list :id "a" :status "open" :priority "1" :type "task" :parent nil :title "A")
+               (list :id "a1" :status "open" :priority "1" :type "task" :parent "a" :title "A1")
+               (list :id "c" :status "open" :priority "1" :type "task" :parent nil :title "C"))))
+    (with-temp-buffer
+      (ticket-browser-mode)
+      (setq-local ticket-browser--expanded (make-hash-table :test 'equal))
+      (setq-local ticket-browser--filter 'all)
+      (dolist (ticket ticket-browser--tickets)
+        (puthash (plist-get ticket :id) t ticket-browser--expanded))
+      (ticket-browser--redisplay)
+      (ticket-test--goto-ticket-id "a")
+      (ticket-browser-collapse-cycle)
+      (should (eq t (gethash "a" ticket-browser--expanded)))
+      (should-not (gethash "a1" ticket-browser--expanded))
+      (should-not (gethash "c" ticket-browser--expanded))
+      (ticket-test--goto-ticket-id "a")
+      (ticket-browser-collapse-cycle)
+      (should-not (gethash "a" ticket-browser--expanded)))))
+
+(ert-deftest ticket-test-browser-expand-cycle-resets-when-selection-changes ()
+  (let ((ticket-browser--tickets
+         (list (list :id "a" :status "open" :priority "1" :type "task" :parent nil :title "A")
+               (list :id "a1" :status "open" :priority "1" :type "task" :parent "a" :title "A1")
+               (list :id "c" :status "open" :priority "1" :type "task" :parent nil :title "C")
+               (list :id "c1" :status "open" :priority "1" :type "task" :parent "c" :title "C1"))))
+    (with-temp-buffer
+      (ticket-browser-mode)
+      (setq-local ticket-browser--expanded (make-hash-table :test 'equal))
+      (setq-local ticket-browser--filter 'all)
+      (ticket-browser--redisplay)
+      (ticket-test--goto-ticket-id "a")
+      (ticket-browser-expand-cycle)
+      (ticket-test--goto-ticket-id "c")
+      (ticket-browser-expand-cycle)
+      (should (eq t (gethash "a" ticket-browser--expanded)))
+      (should (eq t (gethash "c" ticket-browser--expanded)))
+      (should-not (gethash "a1" ticket-browser--expanded))
+      (should-not (gethash "c1" ticket-browser--expanded)))))
 
 (ert-deftest ticket-test-set-frontmatter-field-rewrites-existing-entry ()
   (with-temp-buffer
@@ -375,9 +446,11 @@
               #'ticket-browser-increase-priority))
   (should (eq (lookup-key ticket-browser-mode-map (kbd ">"))
               #'ticket-browser-decrease-priority))
-  (should (eq (lookup-key ticket-browser-mode-map (kbd "["))
-              #'ticket-browser-collapse-all))
-  (should (eq (lookup-key ticket-browser-mode-map (kbd "]"))
-              #'ticket-browser-expand-all)))
+  (should (eq (lookup-key ticket-browser-mode-map (kbd "TAB"))
+              #'ticket-browser-expand-cycle))
+  (should (eq (lookup-key ticket-browser-mode-map (kbd "<backtab>"))
+              #'ticket-browser-collapse-cycle))
+  (should-not (lookup-key ticket-browser-mode-map (kbd "[")))
+  (should-not (lookup-key ticket-browser-mode-map (kbd "]"))))
 
 ;;; test-ticket.el ends here

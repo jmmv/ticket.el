@@ -148,6 +148,12 @@ Returns non-nil if the field was written."
 (defvar-local ticket-browser--expanded nil
   "Hash table mapping ticket id to t (expanded) or nil (collapsed).")
 
+(defvar-local ticket-browser--tab-cycle-id nil
+  "Ticket ID used for the current TAB cycle.")
+
+(defvar-local ticket-browser--tab-cycle-direction nil
+  "Direction for the current TAB cycle: `expand' or `collapse'.")
+
 (defvar-local ticket-browser--filter 'open-only
   "Current filter: `all' or `open-only'.")
 
@@ -485,14 +491,44 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
                   (forward-line)
                   (beginning-of-line))))))))))
 
+(defun ticket-browser--set-tab-cycle (id direction)
+  "Remember ID and DIRECTION for multi-step TAB behavior."
+  (setq ticket-browser--tab-cycle-id id)
+  (setq ticket-browser--tab-cycle-direction direction))
+
+(defun ticket-browser--same-tab-cycle-p (id direction)
+  "Return non-nil when ID and DIRECTION match the last TAB cycle."
+  (and (equal id ticket-browser--tab-cycle-id)
+       (eq direction ticket-browser--tab-cycle-direction)))
+
 ;;;###autoload
-(defun ticket-browser-toggle ()
-  "Toggle expand/collapse of node at point."
+(defun ticket-browser-expand-cycle ()
+  "Expand node at point, or expand all on repeated TAB."
   (interactive)
   (let ((id (ticket-browser--ticket-at-point)))
     (when (and id (get-text-property (point) 'ticket-browser-has-children))
-      (puthash id (not (gethash id ticket-browser--expanded)) ticket-browser--expanded)
-      (ticket-browser--redisplay))))
+      (if (ticket-browser--same-tab-cycle-p id 'expand)
+          (ticket-browser-expand-all)
+        (puthash id t ticket-browser--expanded)
+        (ticket-browser--redisplay))
+      (ticket-browser--set-tab-cycle id 'expand))))
+
+;;;###autoload
+(defun ticket-browser-collapse-cycle ()
+  "Collapse all but point node, or collapse point node on repeated Shift+TAB."
+  (interactive)
+  (let ((id (ticket-browser--ticket-at-point)))
+    (when (and id (get-text-property (point) 'ticket-browser-has-children))
+      (if (ticket-browser--same-tab-cycle-p id 'collapse)
+          (progn
+            (puthash id nil ticket-browser--expanded)
+            (ticket-browser--redisplay))
+        (maphash (lambda (k _v)
+                   (unless (equal k id)
+                     (puthash k nil ticket-browser--expanded)))
+                 ticket-browser--expanded)
+        (ticket-browser--redisplay))
+      (ticket-browser--set-tab-cycle id 'collapse))))
 
 ;;;###autoload
 (defun ticket-browser-collapse-all ()
@@ -586,9 +622,8 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
   "Major mode for browsing tickets as a dependency tree.")
 
 (define-key ticket-browser-mode-map (kbd "RET") 'ticket-browser-open-ticket)
-(define-key ticket-browser-mode-map (kbd "TAB") 'ticket-browser-toggle)
-(define-key ticket-browser-mode-map (kbd "[") 'ticket-browser-collapse-all)
-(define-key ticket-browser-mode-map (kbd "]") 'ticket-browser-expand-all)
+(define-key ticket-browser-mode-map (kbd "TAB") 'ticket-browser-expand-cycle)
+(define-key ticket-browser-mode-map (kbd "<backtab>") 'ticket-browser-collapse-cycle)
 (define-key ticket-browser-mode-map (kbd "g") 'ticket-browser-refresh)
 (define-key ticket-browser-mode-map (kbd "q") 'quit-window)
 (define-key ticket-browser-mode-map (kbd "<") 'ticket-browser-increase-priority)
@@ -600,9 +635,8 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
   (let ((s-map (ticket-browser--make-filter-map)))
     (evil-define-key* 'motion ticket-browser-mode-map
       (kbd "RET") #'ticket-browser-open-ticket
-      (kbd "TAB") #'ticket-browser-toggle
-      "[" #'ticket-browser-collapse-all
-      "]" #'ticket-browser-expand-all
+      (kbd "TAB") #'ticket-browser-expand-cycle
+      (kbd "<backtab>") #'ticket-browser-collapse-cycle
       "g" #'ticket-browser-refresh
       "q" #'quit-window
       "s" s-map
