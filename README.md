@@ -124,11 +124,15 @@ Inside the `*tickets*` browser buffer:
 | `s a` | Filter: show all tickets including closed      |
 | `<`   | Increase priority of ticket at point (P0 = highest) |
 | `>`   | Decrease priority of ticket at point           |
+| `c`   | Close selected ticket                          |
+| `o`   | Reopen selected ticket                         |
+| `d`   | Add dependency to selected ticket              |
+| `p`   | Set parent for selected ticket                 |
 | `?`   | Open browser action/help menu                  |
 | `q`   | Quit the browser window                        |
 
 The browser action/help menu (`?`) exposes the same tree navigation, filtering,
-and priority shortcuts, plus edit actions for the ticket at point:
+and priority shortcuts, plus edit actions for the selected ticket:
 
 - Close / reopen.
 - Add dependency (opens selection mode in the browser).

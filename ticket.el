@@ -161,6 +161,9 @@ Returns non-nil if the field was written."
   "When non-nil, a function called with a ticket ID instead of
 opening it.  Used by `ticket-view-set-dep'.")
 
+(defvar ticket-browser--transient-source-buffer nil
+  "Browser buffer from which `ticket-browser-transient' was opened.")
+
 (defvar-local ticket-view--return-buffer nil
   "Browser buffer to restore when this ticket buffer is closed.")
 
@@ -442,14 +445,41 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
         (unless found
           (goto-char (point-min)))))))
 
-(defun ticket-browser--ticket-at-point ()
-  "Return the ticket ID at point, or nil."
-  (get-text-property (point) 'ticket-browser-id))
+(defun ticket-browser--action-buffer ()
+  "Return the browser buffer to use for selected-ticket actions."
+  (cond
+   ((derived-mode-p 'ticket-browser-mode) (current-buffer))
+   ((with-current-buffer (window-buffer (selected-window))
+      (derived-mode-p 'ticket-browser-mode))
+    (window-buffer (selected-window)))
+   ((and (buffer-live-p ticket-browser--transient-source-buffer)
+         (with-current-buffer ticket-browser--transient-source-buffer
+           (derived-mode-p 'ticket-browser-mode)))
+    ticket-browser--transient-source-buffer)))
 
-(defun ticket-browser--require-ticket-at-point ()
-  "Return ticket ID at point, or signal a user error."
-  (or (ticket-browser--ticket-at-point)
-      (user-error "No ticket at point")))
+(defun ticket-browser--call-with-action-buffer (fn)
+  "Call FN in the browser action buffer."
+  (let ((buffer (ticket-browser--action-buffer)))
+    (unless buffer
+      (user-error "No ticket browser buffer available"))
+    (with-current-buffer buffer
+      (funcall fn))))
+
+(defun ticket-browser--selected-ticket-id ()
+  "Return ticket ID of the selected browser line, or nil."
+  (let ((buffer (ticket-browser--action-buffer)))
+    (when buffer
+      (with-current-buffer buffer
+        (or (get-text-property (line-beginning-position) 'ticket-browser-id)
+            ;; Fallback for edge cases where point is outside line content.
+            (get-text-property (point) 'ticket-browser-id)
+            (and (> (point) (point-min))
+                 (get-text-property (1- (point)) 'ticket-browser-id)))))))
+
+(defun ticket-browser--require-selected-ticket-id ()
+  "Return selected ticket ID, or signal a user error."
+  (or (ticket-browser--selected-ticket-id)
+      (user-error "No ticket selected")))
 
 (defun ticket-browser-quit ()
   "Quit the browser window, cancelling any pending selection."
@@ -459,11 +489,17 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
     (message "Selection cancelled."))
   (quit-window))
 
+(defun ticket-browser-menu ()
+  "Open the browser actions menu with buffer context preserved."
+  (interactive)
+  (setq ticket-browser--transient-source-buffer (current-buffer))
+  (ticket-browser-transient))
+
 ;;;###autoload
 (defun ticket-browser-open-ticket ()
-  "Open ticket at point, or call selection callback if set."
+  "Open selected ticket, or call selection callback if set."
   (interactive)
-  (let ((id (ticket-browser--ticket-at-point)))
+  (let ((id (ticket-browser--selected-ticket-id)))
     (when id
       (if ticket-browser--selection-callback
           (let ((callback ticket-browser--selection-callback))
@@ -518,30 +554,34 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
 (defun ticket-browser-expand-cycle ()
   "Expand node at point, or expand all on repeated TAB."
   (interactive)
-  (let ((id (ticket-browser--ticket-at-point)))
-    (when (and id (get-text-property (point) 'ticket-browser-has-children))
-      (if (ticket-browser--same-tab-cycle-p id 'expand)
-          (ticket-browser-expand-all)
-        (puthash id t ticket-browser--expanded)
-        (ticket-browser--redisplay))
-      (ticket-browser--set-tab-cycle id 'expand))))
+  (ticket-browser--call-with-action-buffer
+   (lambda ()
+     (let ((id (ticket-browser--selected-ticket-id)))
+       (when (and id (get-text-property (point) 'ticket-browser-has-children))
+         (if (ticket-browser--same-tab-cycle-p id 'expand)
+             (ticket-browser-expand-all)
+           (puthash id t ticket-browser--expanded)
+           (ticket-browser--redisplay))
+         (ticket-browser--set-tab-cycle id 'expand))))))
 
 ;;;###autoload
 (defun ticket-browser-collapse-cycle ()
   "Collapse all but point node, or collapse point node on repeated Shift+TAB."
   (interactive)
-  (let ((id (ticket-browser--ticket-at-point)))
-    (when (and id (get-text-property (point) 'ticket-browser-has-children))
-      (if (ticket-browser--same-tab-cycle-p id 'collapse)
-          (progn
-            (puthash id nil ticket-browser--expanded)
-            (ticket-browser--redisplay))
-        (maphash (lambda (k _v)
-                   (unless (equal k id)
-                     (puthash k nil ticket-browser--expanded)))
-                 ticket-browser--expanded)
-        (ticket-browser--redisplay))
-      (ticket-browser--set-tab-cycle id 'collapse))))
+  (ticket-browser--call-with-action-buffer
+   (lambda ()
+     (let ((id (ticket-browser--selected-ticket-id)))
+       (when (and id (get-text-property (point) 'ticket-browser-has-children))
+         (if (ticket-browser--same-tab-cycle-p id 'collapse)
+             (progn
+               (puthash id nil ticket-browser--expanded)
+               (ticket-browser--redisplay))
+           (maphash (lambda (k _v)
+                      (unless (equal k id)
+                        (puthash k nil ticket-browser--expanded)))
+                    ticket-browser--expanded)
+           (ticket-browser--redisplay))
+         (ticket-browser--set-tab-cycle id 'collapse))))))
 
 ;;;###autoload
 (defun ticket-browser-collapse-all ()
@@ -610,17 +650,19 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
 (defun ticket-browser--adjust-priority (delta &optional min-priority)
   "Adjust priority of ticket at point by DELTA.
 When MIN-PRIORITY is non-nil, clamp to that minimum."
-  (let ((id (ticket-browser--ticket-at-point)))
-    (when id
-      (let* ((ticket (ticket-browser--ticket-by-id id))
-             (current (string-to-number (or (plist-get ticket :priority) "2")))
-             (candidate (+ current delta))
-             (new-priority (if min-priority
-                               (max min-priority candidate)
-                             candidate)))
-        (ticket-browser--set-priority id new-priority)
-        (ticket-browser-refresh)
-        (message "Ticket %s priority: P%d" id new-priority)))))
+  (ticket-browser--call-with-action-buffer
+   (lambda ()
+     (let ((id (ticket-browser--selected-ticket-id)))
+       (when id
+         (let* ((ticket (ticket-browser--ticket-by-id id))
+                (current (string-to-number (or (plist-get ticket :priority) "2")))
+                (candidate (+ current delta))
+                (new-priority (if min-priority
+                                  (max min-priority candidate)
+                                candidate)))
+           (ticket-browser--set-priority id new-priority)
+           (ticket-browser-refresh)
+           (message "Ticket %s priority: P%d" id new-priority)))))))
 
 ;;;###autoload
 (defun ticket-browser-increase-priority ()
@@ -634,27 +676,35 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
   (interactive)
   (ticket-browser--adjust-priority 1))
 
-(defun ticket-browser-close-ticket-at-point ()
-  "Close ticket at point and refresh the browser."
+(defun ticket-browser-close-selected-ticket ()
+  "Close the selected ticket and refresh the browser."
   (interactive)
-  (let ((id (ticket-browser--require-ticket-at-point)))
-    (ticket--run-tk-checked "close" id)
-    (ticket-browser-refresh)
+  (let ((id (ticket-browser--require-selected-ticket-id)))
+    (ticket-browser--call-with-action-buffer
+     (lambda ()
+       (let ((default-directory (or (ticket--root-directory) default-directory)))
+         (ticket--run-tk-checked "close" id)
+         (ticket-browser-refresh))))
     (message "Ticket %s closed." id)))
 
-(defun ticket-browser-reopen-ticket-at-point ()
-  "Reopen ticket at point and refresh the browser."
+(defun ticket-browser-reopen-selected-ticket ()
+  "Reopen the selected ticket and refresh the browser."
   (interactive)
-  (let ((id (ticket-browser--require-ticket-at-point)))
-    (ticket--run-tk-checked "reopen" id)
-    (ticket-browser-refresh)
+  (let ((id (ticket-browser--require-selected-ticket-id)))
+    (ticket-browser--call-with-action-buffer
+     (lambda ()
+       (let ((default-directory (or (ticket--root-directory) default-directory)))
+         (ticket--run-tk-checked "reopen" id)
+         (ticket-browser-refresh))))
     (message "Ticket %s reopened." id)))
 
-(defun ticket-browser-set-dep-at-point ()
-  "Add a dependency to ticket at point via browser selection."
+(defun ticket-browser-set-dep-for-selected-ticket ()
+  "Add a dependency to the selected ticket via browser selection."
   (interactive)
-  (let ((source-id (ticket-browser--require-ticket-at-point))
-        (project-root (or (ticket--root-directory) default-directory)))
+  (let* ((source-id (ticket-browser--require-selected-ticket-id))
+         (action-buffer (ticket-browser--action-buffer))
+         (project-root (with-current-buffer action-buffer
+                         (or (ticket--root-directory) default-directory))))
     (ticket-browser-all)
     (with-current-buffer (get-buffer "*tickets*")
       (setq ticket-browser--selection-callback
@@ -669,10 +719,10 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
               (message "Added %s as dependency of %s." dep-id source-id))))
     (message "Select dependency (RET to confirm, q to cancel).")))
 
-(defun ticket-browser-set-parent-at-point ()
-  "Set the parent of ticket at point via browser selection."
+(defun ticket-browser-set-parent-for-selected-ticket ()
+  "Set the parent of the selected ticket via browser selection."
   (interactive)
-  (let ((source-id (ticket-browser--require-ticket-at-point)))
+  (let ((source-id (ticket-browser--require-selected-ticket-id)))
     (ticket-browser-all)
     (with-current-buffer (get-buffer "*tickets*")
       (setq ticket-browser--selection-callback
@@ -686,6 +736,12 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
                   (ticket-browser-refresh)))
               (message "Parent of %s set to %s." source-id parent-id))))
     (message "Select parent ticket (RET to confirm, q to cancel).")))
+
+;; Backward-compatible aliases for previous command names.
+(defalias 'ticket-browser-close-ticket-at-point #'ticket-browser-close-selected-ticket)
+(defalias 'ticket-browser-reopen-ticket-at-point #'ticket-browser-reopen-selected-ticket)
+(defalias 'ticket-browser-set-dep-at-point #'ticket-browser-set-dep-for-selected-ticket)
+(defalias 'ticket-browser-set-parent-at-point #'ticket-browser-set-parent-for-selected-ticket)
 
 (defun ticket-browser--make-filter-map ()
   "Build the keymap for browser filter commands."
@@ -702,9 +758,13 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
 (define-key ticket-browser-mode-map (kbd "<backtab>") 'ticket-browser-collapse-cycle)
 (define-key ticket-browser-mode-map (kbd "g") 'ticket-browser-refresh)
 (define-key ticket-browser-mode-map (kbd "q") 'ticket-browser-quit)
-(define-key ticket-browser-mode-map (kbd "?") 'ticket-browser-transient)
+(define-key ticket-browser-mode-map (kbd "?") 'ticket-browser-menu)
 (define-key ticket-browser-mode-map (kbd "<") 'ticket-browser-increase-priority)
 (define-key ticket-browser-mode-map (kbd ">") 'ticket-browser-decrease-priority)
+(define-key ticket-browser-mode-map (kbd "c") 'ticket-browser-close-selected-ticket)
+(define-key ticket-browser-mode-map (kbd "o") 'ticket-browser-reopen-selected-ticket)
+(define-key ticket-browser-mode-map (kbd "d") 'ticket-browser-set-dep-for-selected-ticket)
+(define-key ticket-browser-mode-map (kbd "p") 'ticket-browser-set-parent-for-selected-ticket)
 (define-key ticket-browser-mode-map "s" (ticket-browser--make-filter-map))
 ;; evil-define-key is a macro and can't be called safely at byte-compile time;
 ;; use evil-define-key* (the underlying function) inside with-eval-after-load.
@@ -717,10 +777,14 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
         (kbd "<backtab>") #'ticket-browser-collapse-cycle
         "g" #'ticket-browser-refresh
         "q" #'ticket-browser-quit
-        "?" #'ticket-browser-transient
+        "?" #'ticket-browser-menu
         "s" s-map
         "<" #'ticket-browser-increase-priority
-        ">" #'ticket-browser-decrease-priority))))
+        ">" #'ticket-browser-decrease-priority
+        "c" #'ticket-browser-close-selected-ticket
+        "o" #'ticket-browser-reopen-selected-ticket
+        "d" #'ticket-browser-set-dep-for-selected-ticket
+        "p" #'ticket-browser-set-parent-for-selected-ticket))))
 
 (defun ticket-browser--open (filter)
   "Open the ticket browser with FILTER (`open-only' or `all')."
@@ -767,11 +831,11 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
    ("s a" "Show all" ticket-browser-show-all)
    ("<" "Increase priority" ticket-browser-increase-priority)
    (">" "Decrease priority" ticket-browser-decrease-priority)]
-  ["Edit ticket at point"
-   ("c" "Close" ticket-browser-close-ticket-at-point)
-   ("o" "Reopen" ticket-browser-reopen-ticket-at-point)
-   ("d" "Add dependency" ticket-browser-set-dep-at-point)
-   ("p" "Set parent" ticket-browser-set-parent-at-point)])
+  ["Selected ticket"
+   ("c" "Close selected ticket" ticket-browser-close-selected-ticket)
+   ("o" "Reopen selected ticket" ticket-browser-reopen-selected-ticket)
+   ("d" "Add dependency to selected" ticket-browser-set-dep-for-selected-ticket)
+   ("p" "Set parent for selected" ticket-browser-set-parent-for-selected-ticket)])
 
 ;;;###autoload
 (transient-define-prefix ticket-transient ()
