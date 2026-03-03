@@ -462,8 +462,24 @@
               #'ticket-browser-set-dep-for-selected-ticket))
   (should (eq (lookup-key ticket-browser-mode-map (kbd "p"))
               #'ticket-browser-set-parent-for-selected-ticket))
+  (should (eq (lookup-key ticket-browser-mode-map (kbd "a"))
+              #'ticket-browser-toggle-filter))
   (should-not (lookup-key ticket-browser-mode-map (kbd "[")))
-  (should-not (lookup-key ticket-browser-mode-map (kbd "]"))))
+  (should-not (lookup-key ticket-browser-mode-map (kbd "]")))
+  (should-not (lookup-key ticket-browser-mode-map (kbd "s"))))
+
+(ert-deftest ticket-test-browser-toggle-filter-switches-between-open-and-all ()
+  (with-temp-buffer
+    (ticket-browser-mode)
+    (setq-local ticket-browser--filter 'open-only)
+    (let ((redisplay-calls 0))
+      (cl-letf (((symbol-function 'ticket-browser--redisplay)
+                 (lambda () (setq redisplay-calls (1+ redisplay-calls)))))
+        (ticket-browser-toggle-filter)
+        (should (eq ticket-browser--filter 'all))
+        (ticket-browser-toggle-filter)
+        (should (eq ticket-browser--filter 'open-only))
+        (should (= redisplay-calls 2))))))
 
 (ert-deftest ticket-test-browser-transient-includes-edit-actions ()
   (let* ((close-suffix (transient-get-suffix 'ticket-browser-transient "c"))
@@ -476,6 +492,14 @@
     (should (equal (plist-get dep-spec :description) "Add dependency to selected"))
     (should (eq (plist-get dep-spec :command)
                 'ticket-browser-set-dep-for-selected-ticket))))
+
+(ert-deftest ticket-test-browser-transient-includes-filter-toggle ()
+  (let* ((suffix (transient-get-suffix 'ticket-browser-transient "a"))
+         (spec (caddr suffix)))
+    (should (equal (plist-get spec :description) "Toggle all/open filter"))
+    (should (eq (plist-get spec :command) 'ticket-browser-toggle-filter))
+    (should-error (transient-get-suffix 'ticket-browser-transient "s a"))
+    (should-error (transient-get-suffix 'ticket-browser-transient "s o"))))
 
 (ert-deftest ticket-test-browser-quit-clears-selection-callback ()
   (with-temp-buffer

@@ -613,6 +613,13 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
   (setq ticket-browser--filter 'all)
   (ticket-browser--redisplay))
 
+(defun ticket-browser-toggle-filter ()
+  "Toggle browser filter between all tickets and open-only tickets."
+  (interactive)
+  (if (eq ticket-browser--filter 'all)
+      (ticket-browser-show-open-only)
+    (ticket-browser-show-all)))
+
 ;;;###autoload
 (defun ticket-browser-refresh ()
   "Reload tickets from disk and re-render."
@@ -743,13 +750,6 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
 (defalias 'ticket-browser-set-dep-at-point #'ticket-browser-set-dep-for-selected-ticket)
 (defalias 'ticket-browser-set-parent-at-point #'ticket-browser-set-parent-for-selected-ticket)
 
-(defun ticket-browser--make-filter-map ()
-  "Build the keymap for browser filter commands."
-  (let ((map (make-sparse-keymap)))
-    (define-key map "o" 'ticket-browser-show-open-only)
-    (define-key map "a" 'ticket-browser-show-all)
-    map))
-
 (define-derived-mode ticket-browser-mode special-mode "Tickets"
   "Major mode for browsing tickets as a dependency tree.")
 
@@ -765,26 +765,25 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
 (define-key ticket-browser-mode-map (kbd "o") 'ticket-browser-reopen-selected-ticket)
 (define-key ticket-browser-mode-map (kbd "d") 'ticket-browser-set-dep-for-selected-ticket)
 (define-key ticket-browser-mode-map (kbd "p") 'ticket-browser-set-parent-for-selected-ticket)
-(define-key ticket-browser-mode-map "s" (ticket-browser--make-filter-map))
+(define-key ticket-browser-mode-map (kbd "a") 'ticket-browser-toggle-filter)
 ;; evil-define-key is a macro and can't be called safely at byte-compile time;
 ;; use evil-define-key* (the underlying function) inside with-eval-after-load.
 (with-eval-after-load 'evil
-  (let ((s-map (ticket-browser--make-filter-map)))
-    (dolist (state '(normal motion))
-      (evil-define-key* state ticket-browser-mode-map
-        (kbd "RET") #'ticket-browser-open-ticket
-        (kbd "TAB") #'ticket-browser-expand-cycle
-        (kbd "<backtab>") #'ticket-browser-collapse-cycle
-        "g" #'ticket-browser-refresh
-        "q" #'ticket-browser-quit
-        "?" #'ticket-browser-menu
-        "s" s-map
-        "<" #'ticket-browser-increase-priority
-        ">" #'ticket-browser-decrease-priority
-        "c" #'ticket-browser-close-selected-ticket
-        "o" #'ticket-browser-reopen-selected-ticket
-        "d" #'ticket-browser-set-dep-for-selected-ticket
-        "p" #'ticket-browser-set-parent-for-selected-ticket))))
+  (dolist (state '(normal motion))
+    (evil-define-key* state ticket-browser-mode-map
+      (kbd "RET") #'ticket-browser-open-ticket
+      (kbd "TAB") #'ticket-browser-expand-cycle
+      (kbd "<backtab>") #'ticket-browser-collapse-cycle
+      "g" #'ticket-browser-refresh
+      "q" #'ticket-browser-quit
+      "?" #'ticket-browser-menu
+      "a" #'ticket-browser-toggle-filter
+      "<" #'ticket-browser-increase-priority
+      ">" #'ticket-browser-decrease-priority
+      "c" #'ticket-browser-close-selected-ticket
+      "o" #'ticket-browser-reopen-selected-ticket
+      "d" #'ticket-browser-set-dep-for-selected-ticket
+      "p" #'ticket-browser-set-parent-for-selected-ticket)))
 
 (defun ticket-browser--open (filter)
   "Open the ticket browser with FILTER (`open-only' or `all')."
@@ -827,8 +826,7 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
    ("g" "Refresh" ticket-browser-refresh)
    ("q" "Quit" ticket-browser-quit)]
   ["Filter and Priority"
-   ("s o" "Show open/in-progress" ticket-browser-show-open-only)
-   ("s a" "Show all" ticket-browser-show-all)
+   ("a" "Toggle all/open filter" ticket-browser-toggle-filter)
    ("<" "Increase priority" ticket-browser-increase-priority)
    (">" "Decrease priority" ticket-browser-decrease-priority)]
   ["Selected ticket"

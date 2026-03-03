@@ -120,8 +120,7 @@ Inside the `*tickets*` browser buffer:
 | `TAB` | Expand current node; press again to expand all |
 | `S-TAB` | Collapse all except current; press again to collapse current |
 | `g`   | Refresh — reload tickets from disk             |
-| `s o` | Filter: show open and in-progress tickets only |
-| `s a` | Filter: show all tickets including closed      |
+| `a`   | Toggle filter: all tickets / open and in-progress only |
 | `<`   | Increase priority of ticket at point (P0 = highest) |
 | `>`   | Decrease priority of ticket at point           |
 | `c`   | Close selected ticket                          |
