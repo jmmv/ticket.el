@@ -124,7 +124,15 @@ Inside the `*tickets*` browser buffer:
 | `s a` | Filter: show all tickets including closed      |
 | `<`   | Increase priority of ticket at point (P0 = highest) |
 | `>`   | Decrease priority of ticket at point           |
+| `?`   | Open browser action/help menu                  |
 | `q`   | Quit the browser window                        |
+
+The browser action/help menu (`?`) exposes the same tree navigation, filtering,
+and priority shortcuts, plus edit actions for the ticket at point:
+
+- Close / reopen.
+- Add dependency (opens selection mode in the browser).
+- Set parent (opens selection mode in the browser).
 
 ### Ticket view minor mode
 
@@ -173,7 +181,8 @@ to `SPC k` in the Doom example) gains a **"Current ticket"** section:
 
 The "Current ticket" section is absent when `ticket-view-mode` is not active
 (i.e., in non-ticket buffers), so `SPC k` continues to work unchanged
-everywhere else.
+everywhere else. In the `*tickets*` browser, use `?` for the browser-specific
+menu.
 
 #### Selection mode in the browser
 

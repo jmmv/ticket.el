@@ -446,6 +446,19 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
   "Return the ticket ID at point, or nil."
   (get-text-property (point) 'ticket-browser-id))
 
+(defun ticket-browser--require-ticket-at-point ()
+  "Return ticket ID at point, or signal a user error."
+  (or (ticket-browser--ticket-at-point)
+      (user-error "No ticket at point")))
+
+(defun ticket-browser-quit ()
+  "Quit the browser window, cancelling any pending selection."
+  (interactive)
+  (when ticket-browser--selection-callback
+    (setq ticket-browser--selection-callback nil)
+    (message "Selection cancelled."))
+  (quit-window))
+
 ;;;###autoload
 (defun ticket-browser-open-ticket ()
   "Open ticket at point, or call selection callback if set."
@@ -579,6 +592,16 @@ GRAPH is (id-table . children-table). FILTER is `all' or `open-only'."
                                        t)
         (write-region (point-min) (point-max) file nil 'silent)))))
 
+(defun ticket-browser--set-ticket-frontmatter-field (id field value)
+  "Set FIELD to VALUE in ticket ID by editing its file directly."
+  (let ((file (ticket--ticket-file id)))
+    (unless (and file (file-exists-p file))
+      (user-error "Ticket %s does not exist" id))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (ticket--set-frontmatter-field field value t)
+      (write-region (point-min) (point-max) file nil 'silent))))
+
 (defun ticket-browser--ticket-by-id (id)
   "Return loaded ticket plist for ID, or nil."
   (seq-find (lambda (ticket) (equal (plist-get ticket :id) id))
@@ -611,6 +634,59 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
   (interactive)
   (ticket-browser--adjust-priority 1))
 
+(defun ticket-browser-close-ticket-at-point ()
+  "Close ticket at point and refresh the browser."
+  (interactive)
+  (let ((id (ticket-browser--require-ticket-at-point)))
+    (ticket--run-tk-checked "close" id)
+    (ticket-browser-refresh)
+    (message "Ticket %s closed." id)))
+
+(defun ticket-browser-reopen-ticket-at-point ()
+  "Reopen ticket at point and refresh the browser."
+  (interactive)
+  (let ((id (ticket-browser--require-ticket-at-point)))
+    (ticket--run-tk-checked "reopen" id)
+    (ticket-browser-refresh)
+    (message "Ticket %s reopened." id)))
+
+(defun ticket-browser-set-dep-at-point ()
+  "Add a dependency to ticket at point via browser selection."
+  (interactive)
+  (let ((source-id (ticket-browser--require-ticket-at-point))
+        (project-root (or (ticket--root-directory) default-directory)))
+    (ticket-browser-all)
+    (with-current-buffer (get-buffer "*tickets*")
+      (setq ticket-browser--selection-callback
+            (lambda (dep-id)
+              (when (equal dep-id source-id)
+                (user-error "Ticket %s cannot depend on itself" source-id))
+              (let ((default-directory project-root))
+                (ticket--run-tk-checked "dep" source-id dep-id))
+              (when-let ((buffer (get-buffer "*tickets*")))
+                (with-current-buffer buffer
+                  (ticket-browser-refresh)))
+              (message "Added %s as dependency of %s." dep-id source-id))))
+    (message "Select dependency (RET to confirm, q to cancel).")))
+
+(defun ticket-browser-set-parent-at-point ()
+  "Set the parent of ticket at point via browser selection."
+  (interactive)
+  (let ((source-id (ticket-browser--require-ticket-at-point)))
+    (ticket-browser-all)
+    (with-current-buffer (get-buffer "*tickets*")
+      (setq ticket-browser--selection-callback
+            (lambda (parent-id)
+              (when (equal parent-id source-id)
+                (user-error "Ticket %s cannot be its own parent" source-id))
+              (ticket-browser--set-ticket-frontmatter-field
+               source-id "parent" parent-id)
+              (when-let ((buffer (get-buffer "*tickets*")))
+                (with-current-buffer buffer
+                  (ticket-browser-refresh)))
+              (message "Parent of %s set to %s." source-id parent-id))))
+    (message "Select parent ticket (RET to confirm, q to cancel).")))
+
 (defun ticket-browser--make-filter-map ()
   "Build the keymap for browser filter commands."
   (let ((map (make-sparse-keymap)))
@@ -625,7 +701,8 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
 (define-key ticket-browser-mode-map (kbd "TAB") 'ticket-browser-expand-cycle)
 (define-key ticket-browser-mode-map (kbd "<backtab>") 'ticket-browser-collapse-cycle)
 (define-key ticket-browser-mode-map (kbd "g") 'ticket-browser-refresh)
-(define-key ticket-browser-mode-map (kbd "q") 'quit-window)
+(define-key ticket-browser-mode-map (kbd "q") 'ticket-browser-quit)
+(define-key ticket-browser-mode-map (kbd "?") 'ticket-browser-transient)
 (define-key ticket-browser-mode-map (kbd "<") 'ticket-browser-increase-priority)
 (define-key ticket-browser-mode-map (kbd ">") 'ticket-browser-decrease-priority)
 (define-key ticket-browser-mode-map "s" (ticket-browser--make-filter-map))
@@ -633,15 +710,17 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
 ;; use evil-define-key* (the underlying function) inside with-eval-after-load.
 (with-eval-after-load 'evil
   (let ((s-map (ticket-browser--make-filter-map)))
-    (evil-define-key* 'motion ticket-browser-mode-map
-      (kbd "RET") #'ticket-browser-open-ticket
-      (kbd "TAB") #'ticket-browser-expand-cycle
-      (kbd "<backtab>") #'ticket-browser-collapse-cycle
-      "g" #'ticket-browser-refresh
-      "q" #'quit-window
-      "s" s-map
-      "<" #'ticket-browser-increase-priority
-      ">" #'ticket-browser-decrease-priority)))
+    (dolist (state '(normal motion))
+      (evil-define-key* state ticket-browser-mode-map
+        (kbd "RET") #'ticket-browser-open-ticket
+        (kbd "TAB") #'ticket-browser-expand-cycle
+        (kbd "<backtab>") #'ticket-browser-collapse-cycle
+        "g" #'ticket-browser-refresh
+        "q" #'ticket-browser-quit
+        "?" #'ticket-browser-transient
+        "s" s-map
+        "<" #'ticket-browser-increase-priority
+        ">" #'ticket-browser-decrease-priority))))
 
 (defun ticket-browser--open (filter)
   "Open the ticket browser with FILTER (`open-only' or `all')."
@@ -673,6 +752,26 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
   (ticket-browser--open 'all))
 
 (require 'transient)
+
+;;;###autoload
+(transient-define-prefix ticket-browser-transient ()
+  "Ticket browser actions."
+  ["Ticket Browser"
+   ("RET" "Open ticket" ticket-browser-open-ticket)
+   ("TAB" "Expand node / all" ticket-browser-expand-cycle)
+   ("S-TAB" "Collapse others / node" ticket-browser-collapse-cycle)
+   ("g" "Refresh" ticket-browser-refresh)
+   ("q" "Quit" ticket-browser-quit)]
+  ["Filter and Priority"
+   ("s o" "Show open/in-progress" ticket-browser-show-open-only)
+   ("s a" "Show all" ticket-browser-show-all)
+   ("<" "Increase priority" ticket-browser-increase-priority)
+   (">" "Decrease priority" ticket-browser-decrease-priority)]
+  ["Edit ticket at point"
+   ("c" "Close" ticket-browser-close-ticket-at-point)
+   ("o" "Reopen" ticket-browser-reopen-ticket-at-point)
+   ("d" "Add dependency" ticket-browser-set-dep-at-point)
+   ("p" "Set parent" ticket-browser-set-parent-at-point)])
 
 ;;;###autoload
 (transient-define-prefix ticket-transient ()
