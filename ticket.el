@@ -720,7 +720,7 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
                 (user-error "Ticket %s cannot depend on itself" source-id))
               (let ((default-directory project-root))
                 (ticket--run-tk-checked "dep" source-id dep-id))
-              (when-let ((buffer (get-buffer "*tickets*")))
+              (when-let* ((buffer (get-buffer "*tickets*")))
                 (with-current-buffer buffer
                   (ticket-browser-refresh)))
               (message "Added %s as dependency of %s." dep-id source-id))))
@@ -738,7 +738,7 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
                 (user-error "Ticket %s cannot be its own parent" source-id))
               (ticket-browser--set-ticket-frontmatter-field
                source-id "parent" parent-id)
-              (when-let ((buffer (get-buffer "*tickets*")))
+              (when-let* ((buffer (get-buffer "*tickets*")))
                 (with-current-buffer buffer
                   (ticket-browser-refresh)))
               (message "Parent of %s set to %s." source-id parent-id))))
@@ -817,6 +817,7 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
 (require 'transient)
 
 ;;;###autoload
+(autoload 'ticket-browser-transient "ticket" "Ticket browser actions." t)
 (transient-define-prefix ticket-browser-transient ()
   "Ticket browser actions."
   ["Ticket Browser"
@@ -836,6 +837,7 @@ When MIN-PRIORITY is non-nil, clamp to that minimum."
    ("p" "Set parent for selected" ticket-browser-set-parent-for-selected-ticket)])
 
 ;;;###autoload
+(autoload 'ticket-transient "ticket" "Ticket management commands." t)
 (transient-define-prefix ticket-transient ()
   "Ticket management commands."
   ["Ticket"

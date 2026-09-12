@@ -45,6 +45,36 @@
         (forward-line 1)))
     (should found)))
 
+(defun ticket-test--transient-suffix-get (suffix prop)
+  "Return PROP from SUFFIX across Transient's old and new layouts."
+  (cond
+   ((and (consp suffix) (plist-member (cdr suffix) prop))
+    (plist-get (cdr suffix) prop))
+   ((and (consp suffix) (plist-member (caddr suffix) prop))
+    (plist-get (caddr suffix) prop))
+   (t nil)))
+
+(ert-deftest ticket-test-generated-autoloads-do-not-evaluate-transient-macros ()
+  (let ((autoload-file (make-temp-file "ticket-autoloads-" nil ".el")))
+    (unwind-protect
+        (progn
+          (require 'autoload)
+          (update-file-autoloads
+           (locate-library "ticket")
+           t
+           autoload-file)
+          (with-temp-buffer
+            (insert-file-contents autoload-file)
+            (let ((contents (buffer-string)))
+              (should (string-match-p
+                       "(autoload 'ticket-transient " contents))
+              (should (string-match-p
+                       "(autoload 'ticket-browser-transient " contents))
+              (should-not (string-match-p
+                           "^(transient-define-prefix " contents)))))
+      (when (file-exists-p autoload-file)
+        (delete-file autoload-file)))))
+
 (ert-deftest ticket-test-parse-file-with-full-frontmatter ()
   (ticket-test--with-temp-project
     (let ((file (expand-file-name "abc123.md" tickets-dir)))
@@ -424,18 +454,20 @@
 
 (ert-deftest ticket-test-transient-uses-browse-keybinding ()
   (let* ((suffix (transient-get-suffix 'ticket-transient "b"))
-         (spec (caddr suffix)))
-    (should (equal (plist-get spec :description) "Browse tickets"))
-    (should (eq (plist-get spec :command) 'ticket-browser))
+         (description (ticket-test--transient-suffix-get suffix :description))
+         (command (ticket-test--transient-suffix-get suffix :command)))
+    (should (equal description "Browse tickets"))
+    (should (eq command 'ticket-browser))
     (should-error (transient-get-suffix 'ticket-transient "l"))
     (should-error (transient-get-suffix 'ticket-transient "L"))))
 
 (ert-deftest ticket-test-transient-includes-open-ticket-at-point ()
   (let* ((ticket-view-mode t)
          (suffix (transient-get-suffix 'ticket-transient "o"))
-         (spec (caddr suffix)))
-    (should (equal (plist-get spec :description) "Open ticket at point"))
-    (should (eq (plist-get spec :command) 'ticket-view-open-ticket-at-point))))
+         (description (ticket-test--transient-suffix-get suffix :description))
+         (command (ticket-test--transient-suffix-get suffix :command)))
+    (should (equal description "Open ticket at point"))
+    (should (eq command 'ticket-view-open-ticket-at-point))))
 
 (ert-deftest ticket-test-view-mode-map-binds-open-ticket-at-point ()
   (should (eq (lookup-key ticket-view-mode-map (kbd "C-c k o"))
@@ -483,21 +515,26 @@
 
 (ert-deftest ticket-test-browser-transient-includes-edit-actions ()
   (let* ((close-suffix (transient-get-suffix 'ticket-browser-transient "c"))
-         (close-spec (caddr close-suffix))
+         (close-description
+          (ticket-test--transient-suffix-get close-suffix :description))
+         (close-command
+          (ticket-test--transient-suffix-get close-suffix :command))
          (dep-suffix (transient-get-suffix 'ticket-browser-transient "d"))
-         (dep-spec (caddr dep-suffix)))
-    (should (equal (plist-get close-spec :description) "Close selected ticket"))
-    (should (eq (plist-get close-spec :command)
-                'ticket-browser-close-selected-ticket))
-    (should (equal (plist-get dep-spec :description) "Add dependency to selected"))
-    (should (eq (plist-get dep-spec :command)
-                'ticket-browser-set-dep-for-selected-ticket))))
+         (dep-description
+          (ticket-test--transient-suffix-get dep-suffix :description))
+         (dep-command
+          (ticket-test--transient-suffix-get dep-suffix :command)))
+    (should (equal close-description "Close selected ticket"))
+    (should (eq close-command 'ticket-browser-close-selected-ticket))
+    (should (equal dep-description "Add dependency to selected"))
+    (should (eq dep-command 'ticket-browser-set-dep-for-selected-ticket))))
 
 (ert-deftest ticket-test-browser-transient-includes-filter-toggle ()
   (let* ((suffix (transient-get-suffix 'ticket-browser-transient "a"))
-         (spec (caddr suffix)))
-    (should (equal (plist-get spec :description) "Toggle all/open filter"))
-    (should (eq (plist-get spec :command) 'ticket-browser-toggle-filter))
+         (description (ticket-test--transient-suffix-get suffix :description))
+         (command (ticket-test--transient-suffix-get suffix :command)))
+    (should (equal description "Toggle all/open filter"))
+    (should (eq command 'ticket-browser-toggle-filter))
     (should-error (transient-get-suffix 'ticket-browser-transient "s a"))
     (should-error (transient-get-suffix 'ticket-browser-transient "s o"))))
 
